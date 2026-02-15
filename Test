@@ -1,0 +1,251 @@
+#!/bin/bash
+# Test script for AI Router setup
+
+set -e
+
+echo "==================================="
+echo "AI Router Test Suite"
+echo "==================================="
+echo ""
+
+# Colors for output
+RED='\033[0;31m'
+GREEN='\033[0;32m'
+YELLOW='\033[1;33m'
+NC='\033[0m' # No Color
+
+# Base URL
+BASE_URL="http://localhost"
+
+# Test function
+test_endpoint() {
+    local name="$1"
+    local url="$2"
+    local method="${3:-GET}"
+    local data="$4"
+    
+    echo -n "Testing $name... "
+    
+    if [ "$method" == "POST" ]; then
+        response=$(curl -s -w "\n%{http_code}" -X POST "$url" \
+            -H "Content-Type: application/json" \
+            -d "$data" 2>/dev/null || echo "000")
+    else
+        response=$(curl -s -w "\n%{http_code}" "$url" 2>/dev/null || echo "000")
+    fi
+    
+    http_code=$(echo "$response" | tail -n1)
+    body=$(echo "$response" | sed '$d')
+    
+    if [ "$http_code" == "200" ] || [ "$http_code" == "201" ]; then
+        echo -e "${GREEN}✓ PASS${NC} (HTTP $http_code)"
+        return 0
+    else
+        echo -e "${RED}✗ FAIL${NC} (HTTP $http_code)"
+        echo "Response: $body"
+        return 1
+    fi
+}
+
+# Check if services are running
+echo "1. Checking if services are running..."
+echo ""
+
+if ! docker compose ps | grep -q "Up"; then
+    echo -e "${RED}Error: Services are not running. Start with 'docker compose up -d'${NC}"
+    exit 1
+fi
+
+echo -e "${GREEN}✓ Services are running${NC}"
+echo ""
+
+# Wait for services to be ready
+echo "2. Waiting for services to be ready (this may take 2-3 minutes)..."
+echo ""
+
+max_wait=300
+elapsed=0
+while [ $elapsed -lt $max_wait ]; do
+    if curl -s "$BASE_URL/health" > /dev/null 2>&1; then
+        echo -e "${GREEN}✓ AI Router is ready${NC}"
+        break
+    fi
+    echo -n "."
+    sleep 5
+    elapsed=$((elapsed + 5))
+done
+
+if [ $elapsed -ge $max_wait ]; then
+    echo -e "${RED}Timeout waiting for services${NC}"
+    exit 1
+fi
+
+echo ""
+
+# Test health endpoints
+echo "3. Testing health endpoints..."
+echo ""
+
+test_endpoint "AI Router Health" "$BASE_URL/health"
+test_endpoint "Router Model Health" "$BASE_URL/router/health"
+test_endpoint "Primary Model Health" "$BASE_URL/primary/health"
+
+echo ""
+
+# Test model listing
+echo "4. Testing model endpoints..."
+echo ""
+
+test_endpoint "List All Models" "$BASE_URL/v1/models"
+test_endpoint "Router Models" "$BASE_URL/router/v1/models"
+test_endpoint "Primary Models" "$BASE_URL/primary/v1/models"
+
+echo ""
+
+# Test chat completions (simple query -> router)
+echo "5. Testing simple query routing..."
+echo ""
+
+simple_data='{
+  "messages": [{"role": "user", "content": "Hello"}],
+  "max_tokens": 50,
+  "temperature": 0.7
+}'
+
+echo "Sending simple query: 'Hello'"
+response=$(curl -s -X POST "$BASE_URL/v1/chat/completions" \
+    -H "Content-Type: application/json" \
+    -d "$simple_data")
+
+# Check for either content or reasoning_content (for reasoning models)
+content=$(echo "$response" | jq -r '.choices[0].message.content // .choices[0].message.reasoning_content // empty')
+model=$(echo "$response" | jq -r '.model // empty')
+
+if [ -n "$content" ] && [ "$content" != "null" ]; then
+    echo -e "${GREEN}✓ Simple query successful${NC}"
+    echo "Response: $(echo "$content" | head -c 100)..."
+
+    # Verify routing to Mini 4B
+    if [[ "$model" == *"Nemotron-Mini-4B"* ]]; then
+        echo -e "${GREEN}✓ Correctly routed to router model (Mini 4B)${NC}"
+    else
+        echo -e "${YELLOW}⚠ Routed to: $model (expected Mini 4B)${NC}"
+    fi
+else
+    echo -e "${RED}✗ Simple query failed${NC}"
+    echo "Response: $response"
+fi
+
+echo ""
+
+# Test chat completions (complex query -> primary)
+echo "6. Testing complex query routing..."
+echo ""
+
+complex_data='{
+  "messages": [{"role": "user", "content": "Explain the concept of quantum entanglement in detail"}],
+  "max_tokens": 200,
+  "temperature": 0.7
+}'
+
+echo "Sending complex query: 'Explain quantum entanglement...'"
+response=$(curl -s -X POST "$BASE_URL/v1/chat/completions" \
+    -H "Content-Type: application/json" \
+    -d "$complex_data")
+
+# Check for either content or reasoning_content (for reasoning models)
+content=$(echo "$response" | jq -r '.choices[0].message.content // .choices[0].message.reasoning_content // empty')
+model=$(echo "$response" | jq -r '.model // empty')
+
+if [ -n "$content" ] && [ "$content" != "null" ]; then
+    echo -e "${GREEN}✓ Complex query successful${NC}"
+    echo "Response: $(echo "$content" | head -c 100)..."
+
+    # Verify routing to Nano 30B
+    if [[ "$model" == *"Nemotron-3-Nano-30B"* ]]; then
+        echo -e "${GREEN}✓ Correctly routed to primary model (Nano 30B)${NC}"
+    else
+        echo -e "${YELLOW}⚠ Routed to: $model (expected Nano 30B)${NC}"
+    fi
+else
+    echo -e "${RED}✗ Complex query failed${NC}"
+    echo "Response: $response"
+fi
+
+echo ""
+
+# Test direct router access
+echo "7. Testing direct model access..."
+echo ""
+
+router_data='{
+  "model": "nvidia/Nemotron-Mini-4B-Instruct",
+  "messages": [{"role": "user", "content": "Hi there"}],
+  "max_tokens": 30
+}'
+
+echo "Testing direct router model access..."
+response=$(curl -s -X POST "$BASE_URL/router/v1/chat/completions" \
+    -H "Content-Type: application/json" \
+    -d "$router_data")
+
+# Check for either content or reasoning_content (for reasoning models)
+content=$(echo "$response" | jq -r '.choices[0].message.content // .choices[0].message.reasoning_content // empty' 2>/dev/null)
+if [ -n "$content" ] && [ "$content" != "null" ]; then
+    echo -e "${GREEN}✓ Direct router access successful${NC}"
+else
+    echo -e "${RED}✗ Direct router access failed${NC}"
+    echo "Response: $response"
+fi
+
+echo ""
+
+primary_data='{
+  "model": "unsloth/NVIDIA-Nemotron-3-Nano-30B-A3B-NVFP4",
+  "messages": [{"role": "user", "content": "Quick test"}],
+  "max_tokens": 30
+}'
+
+echo "Testing direct primary model access..."
+response=$(curl -s -X POST "$BASE_URL/primary/v1/chat/completions" \
+    -H "Content-Type: application/json" \
+    -d "$primary_data")
+
+# Check for either content or reasoning_content (for reasoning models)
+content=$(echo "$response" | jq -r '.choices[0].message.content // .choices[0].message.reasoning_content // empty' 2>/dev/null)
+if [ -n "$content" ] && [ "$content" != "null" ]; then
+    echo -e "${GREEN}✓ Direct primary access successful${NC}"
+else
+    echo -e "${RED}✗ Direct primary access failed${NC}"
+    echo "Response: $response"
+fi
+
+echo ""
+
+# Test Traefik dashboard
+echo "8. Testing Traefik dashboard..."
+echo ""
+
+if curl -s "http://localhost:8080/api/overview" | jq . > /dev/null 2>&1; then
+    echo -e "${GREEN}✓ Traefik dashboard accessible${NC}"
+    echo "Visit: http://localhost:8080"
+else
+    echo -e "${YELLOW}⚠ Traefik dashboard not accessible${NC}"
+fi
+
+echo ""
+
+# Summary
+echo "==================================="
+echo "Test Summary"
+echo "==================================="
+echo ""
+echo "All critical endpoints tested."
+echo ""
+echo "Next steps:"
+echo "  • View logs: docker compose logs -f"
+echo "  • Monitor GPU: nvidia-smi"
+echo "  • Traefik dashboard: http://localhost:8080"
+echo ""
+echo "For more tests, use: make test-router or make test-primary"
+echo ""

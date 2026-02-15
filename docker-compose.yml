@@ -1,4 +1,5 @@
 version: '3.8'
+
 services:
   traefik:
     image: traefik:v3.6
@@ -6,42 +7,107 @@ services:
     restart: unless-stopped
     ports:
       - "80:80"
-      - "8080:8080"
+      - "8080:8080"  # Dashboard - secure this in production
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock:ro
       - ./traefik:/etc/traefik
     command:
-      - --log.level=DEBUG
-      - --api.insecure=true
+      - --log.level=INFO  # Changed from DEBUG for production
+      - --api.dashboard=true
+      - --api.insecure=true  # TODO: Add auth middleware in production
       - --providers.docker=true
+      - --providers.docker.exposedbydefault=false  # Explicit opt-in
       - --entrypoints.web.address=:80
     labels:
       - "traefik.enable=true"
       - "traefik.http.routers.traefik.rule=Host(`traefik.local`)"
       - "traefik.http.routers.traefik.service=api@internal"
       - "traefik.http.routers.traefik.entrypoints=web"
+    networks:
+      - ai-network
 
   ai-router:
     image: python:3.12-slim
-    command: bash -c "pip install flask requests && python router.py"
+    container_name: ai-router
+    restart: unless-stopped
+    command: bash -c "pip install --no-cache-dir flask requests && python router.py"
     volumes:
       - ./router.py:/app/router.py
     working_dir: /app
     environment:
       - XAI_API_KEY=${XAI_API_KEY}
-    ports:
-      - "8002:8002"
+      - ROUTER_URL=http://router:8001
+      - PRIMARY_URL=http://primary:8000
     depends_on:
-      - router
-      - primary
+      router:
+        condition: service_healthy
+      primary:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "python", "-c", "import requests; requests.get('http://localhost:8002/health', timeout=5)"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 10s
     labels:
       - "traefik.enable=true"
-      - "traefik.http.routers.ai-router.rule=PathPrefix(`/`)"
+      - "traefik.http.routers.ai-router.rule=PathPrefix(`/v1`) || PathPrefix(`/api`) || Path(`/health`) || Path(`/stats`) || Path(`/`)"
+      - "traefik.http.routers.ai-router.entrypoints=web"
       - "traefik.http.routers.ai-router.service=ai-router"
       - "traefik.http.services.ai-router.loadbalancer.server.port=8002"
+    networks:
+      - ai-network
 
   router:
     image: vllm/vllm-openai:latest
+    container_name: vllm-router
+    restart: unless-stopped
+    runtime: nvidia
+    environment:
+      - LD_LIBRARY_PATH=/usr/lib/x86_64-linux-gnu
+      - VLLM_USE_MODELSCOPE=false
+      - HF_TOKEN=${HF_TOKEN}
+    command: >
+      --model nvidia/Nemotron-Mini-4B-Instruct
+      --dtype bfloat16
+      --kv-cache-dtype auto
+      --gpu-memory-utilization 0.2
+      --max-model-len 4096
+      --port 8001
+      --enforce-eager
+      --trust-remote-code
+    volumes:
+      - hf-cache:/root/.cache/huggingface
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              device_ids: ['0']  # Explicitly use GPU 0
+              capabilities: [gpu]
+        limits:
+          memory: 8G  # Much smaller model
+    healthcheck:
+      test: ["CMD-SHELL", "curl -f http://localhost:8001/health || exit 1"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 180s  # Models take time to load
+    labels:
+      - "traefik.enable=true"
+      - "traefik.http.routers.router.rule=PathPrefix(`/router`)"
+      - "traefik.http.routers.router.entrypoints=web"
+      - "traefik.http.routers.router.service=router"
+      - "traefik.http.services.router.loadbalancer.server.port=8001"
+      - "traefik.http.middlewares.router-stripprefix.stripprefix.prefixes=/router"
+      - "traefik.http.routers.router.middlewares=router-stripprefix"
+    networks:
+      - ai-network
+
+  primary:
+    image: vllm/vllm-openai:latest
+    container_name: vllm-primary
+    restart: unless-stopped
     runtime: nvidia
     environment:
       - LD_LIBRARY_PATH=/usr/lib/x86_64-linux-gnu
@@ -53,57 +119,46 @@ services:
       --model unsloth/NVIDIA-Nemotron-3-Nano-30B-A3B-NVFP4
       --dtype bfloat16
       --kv-cache-dtype fp8
-      --gpu-memory-utilization 0.5
-      --max-model-len 4096
-      --port 8001
+      --gpu-memory-utilization 0.7
+      --max-model-len 8192
+      --port 8000
       --enforce-eager
       --trust-remote-code
       --reasoning-parser-plugin /app/nano_v3_reasoning_parser.py
       --reasoning-parser nano_v3
     volumes:
       - ./nano_v3_reasoning_parser.py:/app/nano_v3_reasoning_parser.py
+      - hf-cache:/root/.cache/huggingface
     deploy:
       resources:
         reservations:
           devices:
             - driver: nvidia
-              count: 1
-              capabilities: [ gpu ]
-    labels:
-      - "traefik.enable=true"
-      - "traefik.http.routers.router.rule=PathPrefix(`/router`)"
-      - "traefik.http.routers.router.service=router"
-      - "traefik.http.services.router.loadbalancer.server.port=8001"
-      - "traefik.http.middlewares.router-stripprefix.stripprefix.prefixes=/router"
-      - "traefik.http.routers.router.middlewares=router-stripprefix"
-
-  primary:
-    image: vllm/vllm-openai:latest
-    runtime: nvidia
-    environment:
-      - LD_LIBRARY_PATH=/usr/lib/x86_64-linux-gnu
-      - VLLM_USE_MODELSCOPE=false
-      - HF_TOKEN=${HF_TOKEN}
-    command: >
-      --model unsloth/DeepSeek-R1-Distill-Llama-8B-unsloth-bnb-4bit
-      --quantization bitsandbytes
-      --dtype auto
-      --kv-cache-dtype fp8
-      --gpu-memory-utilization 0.4
-      --max-model-len 32768
-      --port 8000
-      --enforce-eager
-    deploy:
-      resources:
-        reservations:
-          devices:
-            - driver: nvidia
-              count: 1
+              device_ids: ['0']  # Same GPU as router
               capabilities: [gpu]
+        limits:
+          memory: 24G  # Larger model needs more memory
+    healthcheck:
+      test: ["CMD-SHELL", "curl -f http://localhost:8000/health || exit 1"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 180s
     labels:
       - "traefik.enable=true"
       - "traefik.http.routers.primary.rule=PathPrefix(`/primary`)"
+      - "traefik.http.routers.primary.entrypoints=web"
       - "traefik.http.routers.primary.service=primary"
       - "traefik.http.services.primary.loadbalancer.server.port=8000"
       - "traefik.http.middlewares.primary-stripprefix.stripprefix.prefixes=/primary"
       - "traefik.http.routers.primary.middlewares=primary-stripprefix"
+    networks:
+      - ai-network
+
+networks:
+  ai-network:
+    driver: bridge
+
+volumes:
+  hf-cache:
+    driver: local
