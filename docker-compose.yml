@@ -33,6 +33,7 @@ services:
     command: bash -c "pip install --no-cache-dir flask requests && python router.py"
     volumes:
       - ./router.py:/app/router.py
+      - ./config:/app/config
     working_dir: /app
     environment:
       - XAI_API_KEY=${XAI_API_KEY}

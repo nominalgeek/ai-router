@@ -212,7 +212,6 @@ echo ""
 
 # Test direct router access
 echo "8. Testing direct model access..."
-echo "7. Testing direct model access..."
 echo ""
 
 router_data='{

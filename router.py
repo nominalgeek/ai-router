@@ -31,12 +31,34 @@ XAI_API_URL = 'https://api.x.ai'  # Base URL without /v1
 # Available models: grok-4-1-fast-non-reasoning, grok-4-1-fast-reasoning, grok-code-fast-1
 XAI_MODEL = os.getenv('XAI_MODEL', 'grok-4-1-fast-reasoning')
 
-# Routing strategy configuration
-SIMPLE_QUERY_MAX_LENGTH = 100
-SIMPLE_QUERY_KEYWORDS = [
-    'hello', 'hi', 'what is', 'who is', 'when is', 'where is',
-    'define', 'meaning', 'quick question', 'yes', 'no', 'thanks'
-]
+# Load routing prompts from external files
+ROUTING_PROMPT_PATH = os.getenv('ROUTING_PROMPT_PATH', '/app/config/routing-prompt.md')
+ROUTING_SYSTEM_PROMPT_PATH = os.getenv('ROUTING_SYSTEM_PROMPT_PATH', '/app/config/routing-system-prompt.md')
+
+def load_prompt_file(path, fallback, label):
+    """Load a prompt template from an external markdown file."""
+    try:
+        with open(path, 'r') as f:
+            prompt = f.read().strip()
+            logger.info(f"Loaded {label} from {path}")
+            return prompt
+    except FileNotFoundError:
+        logger.error(f"{label} not found at {path}, using fallback")
+        return fallback
+
+ROUTING_SYSTEM_PROMPT = load_prompt_file(
+    ROUTING_SYSTEM_PROMPT_PATH,
+    'You are a query classifier. Respond with ONLY ONE WORD: SIMPLE, MODERATE, or COMPLEX.',
+    'routing system prompt'
+)
+
+ROUTING_PROMPT = load_prompt_file(
+    ROUTING_PROMPT_PATH,
+    ('Classify this query as SIMPLE, MODERATE, or COMPLEX.\n'
+     'User query: "{query}"\n'
+     'Respond with ONLY ONE WORD: SIMPLE, MODERATE, or COMPLEX'),
+    'routing prompt'
+)
 
 
 def determine_route(messages: list) -> str:
@@ -56,32 +78,22 @@ def determine_route(messages: list) -> str:
     # Get the last user message
     last_message = messages[-1].get('content', '')
 
-    # Create routing classification prompt
-    routing_prompt = """Classify the complexity of this user query:
-
-SIMPLE: Greetings, casual chat, basic questions with obvious answers
-Examples: "Hello", "What is Python?", "How are you?"
-
-MODERATE: Explanations of concepts, coding help, standard analysis tasks
-Examples: "Explain binary search", "Debug this code", "Compare REST vs GraphQL"
-
-COMPLEX: Research-level questions, novel problem-solving, advanced multi-domain analysis, cutting-edge topics, requires deep expertise
-Examples: "Design a novel algorithm for...", "Analyze quantum computing implications...", "Propose new cryptographic methods..."
-
-User query: "{query}"
-
-Respond with ONLY ONE WORD: SIMPLE, MODERATE, or COMPLEX""".format(query=last_message)
+    # Build routing classification prompt from external template
+    routing_prompt = ROUTING_PROMPT.format(query=last_message)
 
     try:
         # Ask Mini 4B router to classify the query
         response = requests.post(
             f"{ROUTER_URL}/v1/chat/completions",
             json={
-                "messages": [{"role": "user", "content": routing_prompt}],
+                "messages": [
+                    {"role": "system", "content": ROUTING_SYSTEM_PROMPT},
+                    {"role": "user", "content": routing_prompt}
+                ],
                 "max_tokens": 10,
                 "temperature": 0.0  # Deterministic
             },
-            timeout=3  # Fast timeout for routing decision
+            timeout=10  # Timeout for routing decision
         )
 
         if response.status_code == 200:
