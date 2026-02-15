@@ -1,2 +1,2 @@
 # ai-router
-Homelab experiation with llm request routing 
+Homelab experimentation with llm request routing 
