@@ -1,0 +1,109 @@
+version: '3.8'
+services:
+  traefik:
+    image: traefik:v3.6
+    container_name: traefik
+    restart: unless-stopped
+    ports:
+      - "80:80"
+      - "8080:8080"
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+      - ./traefik:/etc/traefik
+    command:
+      - --log.level=DEBUG
+      - --api.insecure=true
+      - --providers.docker=true
+      - --entrypoints.web.address=:80
+    labels:
+      - "traefik.enable=true"
+      - "traefik.http.routers.traefik.rule=Host(`traefik.local`)"
+      - "traefik.http.routers.traefik.service=api@internal"
+      - "traefik.http.routers.traefik.entrypoints=web"
+
+  ai-router:
+    image: python:3.12-slim
+    command: bash -c "pip install flask requests && python router.py"
+    volumes:
+      - ./router.py:/app/router.py
+    working_dir: /app
+    environment:
+      - XAI_API_KEY=${XAI_API_KEY}
+    ports:
+      - "8002:8002"
+    depends_on:
+      - router
+      - primary
+    labels:
+      - "traefik.enable=true"
+      - "traefik.http.routers.ai-router.rule=PathPrefix(`/`)"
+      - "traefik.http.routers.ai-router.service=ai-router"
+      - "traefik.http.services.ai-router.loadbalancer.server.port=8002"
+
+  router:
+    image: vllm/vllm-openai:latest
+    runtime: nvidia
+    environment:
+      - LD_LIBRARY_PATH=/usr/lib/x86_64-linux-gnu
+      - VLLM_USE_MODELSCOPE=false
+      - VLLM_USE_FLASHINFER_MOE_FP4=1
+      - VLLM_FLASHINFER_MOE_BACKEND=throughput
+      - HF_TOKEN=${HF_TOKEN}
+    command: >
+      --model unsloth/NVIDIA-Nemotron-3-Nano-30B-A3B-NVFP4
+      --dtype bfloat16
+      --kv-cache-dtype fp8
+      --gpu-memory-utilization 0.5
+      --max-model-len 4096
+      --port 8001
+      --enforce-eager
+      --trust-remote-code
+      --reasoning-parser-plugin /app/nano_v3_reasoning_parser.py
+      --reasoning-parser nano_v3
+    volumes:
+      - ./nano_v3_reasoning_parser.py:/app/nano_v3_reasoning_parser.py
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: 1
+              capabilities: [ gpu ]
+    labels:
+      - "traefik.enable=true"
+      - "traefik.http.routers.router.rule=PathPrefix(`/router`)"
+      - "traefik.http.routers.router.service=router"
+      - "traefik.http.services.router.loadbalancer.server.port=8001"
+      - "traefik.http.middlewares.router-stripprefix.stripprefix.prefixes=/router"
+      - "traefik.http.routers.router.middlewares=router-stripprefix"
+
+  primary:
+    image: vllm/vllm-openai:latest
+    runtime: nvidia
+    environment:
+      - LD_LIBRARY_PATH=/usr/lib/x86_64-linux-gnu
+      - VLLM_USE_MODELSCOPE=false
+      - HF_TOKEN=${HF_TOKEN}
+    command: >
+      --model unsloth/DeepSeek-R1-Distill-Llama-8B-unsloth-bnb-4bit
+      --quantization bitsandbytes
+      --dtype auto
+      --kv-cache-dtype fp8
+      --gpu-memory-utilization 0.4
+      --max-model-len 32768
+      --port 8000
+      --enforce-eager
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: 1
+              capabilities: [gpu]
+    labels:
+      - "traefik.enable=true"
+      - "traefik.http.routers.primary.rule=PathPrefix(`/primary`)"
+      - "traefik.http.routers.primary.service=primary"
+      - "traefik.http.services.primary.loadbalancer.server.port=8000"
+      - "traefik.http.middlewares.primary-stripprefix.stripprefix.prefixes=/primary"
+      - "traefik.http.routers.primary.middlewares=primary-stripprefix"

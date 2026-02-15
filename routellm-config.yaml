@@ -1,0 +1,5 @@
+routers:
+  mf:
+    strong_model: xai/grok-4-1-fast-non-reasoning
+    weak_model: local
+    threshold: 0.3
