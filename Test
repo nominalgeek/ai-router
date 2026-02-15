@@ -138,8 +138,8 @@ fi
 
 echo ""
 
-# Test chat completions (complex query -> primary)
-echo "6. Testing complex query routing..."
+# Test chat completions (moderate query -> primary)
+echo "6. Testing moderate query routing..."
 echo ""
 
 complex_data='{
@@ -148,7 +148,7 @@ complex_data='{
   "temperature": 0.7
 }'
 
-echo "Sending complex query: 'Explain quantum entanglement...'"
+echo "Sending moderate query: 'Explain quantum entanglement...'"
 response=$(curl -s -X POST "$BASE_URL/v1/chat/completions" \
     -H "Content-Type: application/json" \
     -d "$complex_data")
@@ -158,7 +158,7 @@ content=$(echo "$response" | jq -r '.choices[0].message.content // .choices[0].m
 model=$(echo "$response" | jq -r '.model // empty')
 
 if [ -n "$content" ] && [ "$content" != "null" ]; then
-    echo -e "${GREEN}✓ Complex query successful${NC}"
+    echo -e "${GREEN}✓ Moderate query successful${NC}"
     echo "Response: $(echo "$content" | head -c 100)..."
 
     # Verify routing to Nano 30B
@@ -168,13 +168,50 @@ if [ -n "$content" ] && [ "$content" != "null" ]; then
         echo -e "${YELLOW}⚠ Routed to: $model (expected Nano 30B)${NC}"
     fi
 else
-    echo -e "${RED}✗ Complex query failed${NC}"
+    echo -e "${RED}✗ Moderate query failed${NC}"
+    echo "Response: $response"
+fi
+
+echo ""
+
+# Test highly complex query routing (xAI)
+echo "7. Testing highly complex query routing (xAI)..."
+echo ""
+
+highly_complex_data='{
+  "messages": [{"role": "user", "content": "Design a novel quantum-resistant cryptographic algorithm that can handle post-quantum threats"}],
+  "max_tokens": 100,
+  "temperature": 0.7
+}'
+
+echo "Sending highly complex query: 'Design quantum-resistant crypto...'"
+response=$(curl -s -X POST "$BASE_URL/v1/chat/completions" \
+    -H "Content-Type: application/json" \
+    -d "$highly_complex_data")
+
+# Check for either content or reasoning_content (for reasoning models)
+content=$(echo "$response" | jq -r '.choices[0].message.content // .choices[0].message.reasoning_content // empty')
+model=$(echo "$response" | jq -r '.model // empty')
+
+if [ -n "$content" ] && [ "$content" != "null" ]; then
+    echo -e "${GREEN}✓ Highly complex query successful${NC}"
+    echo "Response: $(echo "$content" | head -c 100)..."
+
+    # Verify routing to xAI
+    if [[ "$model" == *"grok"* ]]; then
+        echo -e "${GREEN}✓ Correctly routed to xAI model (Grok)${NC}"
+    else
+        echo -e "${YELLOW}⚠ Routed to: $model (expected Grok)${NC}"
+    fi
+else
+    echo -e "${RED}✗ Highly complex query failed${NC}"
     echo "Response: $response"
 fi
 
 echo ""
 
 # Test direct router access
+echo "8. Testing direct model access..."
 echo "7. Testing direct model access..."
 echo ""
 
@@ -223,7 +260,7 @@ fi
 echo ""
 
 # Test Traefik dashboard
-echo "8. Testing Traefik dashboard..."
+echo "9. Testing Traefik dashboard..."
 echo ""
 
 if curl -s "http://localhost:8080/api/overview" | jq . > /dev/null 2>&1; then
