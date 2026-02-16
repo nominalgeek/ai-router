@@ -35,7 +35,7 @@ All local inference runs on a single workstation. Development and deployment dec
 | **RAM** | 92 GB DDR5 |
 | **Storage** | 2x Samsung 990 PRO 2TB NVMe + 1x Crucial T700 1TB NVMe |
 | **OS** | Debian 13 (Trixie) |
-| **Python** | 3.13 |
+| **Python** | 3.13 (host) / 3.12-slim (ai-router container) |
 | **CUDA** | 13.1 (driver 590.48) |
 | **Docker** | 29.2 / Compose 5.0 |
 
@@ -46,9 +46,9 @@ Both vLLM containers share GPU 0. The split is configured in `docker-compose.yml
 | Container | Model | VRAM budget | Context length |
 |-----------|-------|-------------|----------------|
 | `vllm-router` | Nemotron Orchestrator 8B (AWQ 4-bit) | ~14% (~13 GB) | 2,048 tokens |
-| `vllm-primary` | Nemotron Nano 30B (fp8 KV cache) | ~65% (~64 GB) | 32,768 tokens |
+| `vllm-primary` | Nemotron Nano 30B (fp8 KV cache) | ~65% (~62 GB) | 32,768 tokens |
 
-Configured total is 0.79 (14% + 65%), but actual VRAM usage is ~89% due to CUDA context overhead (~10%). This leaves ~11% (~10 GB) free as headroom. The router model weights are ~6 GB after AWQ 4-bit quantization; fp8_e4m3 KV cache and prefix caching keep memory efficient within the 14% budget. The primary also uses fp8_e4m3 KV cache, which lets it maintain 32K context within its reduced 65% budget.
+Configured total is 0.79 (14% + 65%), but actual VRAM usage is ~89% due to CUDA context overhead (~10%). This leaves ~11% (~10 GB) free as headroom. The router model weights are ~6 GB after AWQ 4-bit quantization; fp8_e4m3 KV cache and prefix caching keep memory efficient within the 14% budget. The primary also uses fp8 KV cache, which lets it maintain 32K context within its reduced 65% budget.
 
 **Models:**
 
@@ -95,6 +95,11 @@ docs/
 agents/
   session-review/
     AGENT.md                    # Task spec for autonomous session-review agent
+  doc-review/
+    AGENT.md                    # Task spec for documentation-review agent
+nano_v3_reasoning_parser.py     # vLLM reasoning parser plugin for Nano 30B (from Unsloth)
+AI_OPERATOR_PROFILE.md          # General AI assistant operating constraints
+requirements.txt                # Python dependencies
 Benchmark                       # Bash script — latency, throughput, concurrency benchmarks
 Test                            # Bash script — integration test suite (health, routing, endpoints)
 logs/sessions/                  # Auto-generated per-request JSON session logs
@@ -134,7 +139,7 @@ make venv                  # create venv + install deps (first time)
 source .venv/bin/activate  # activate before any Python work
 ```
 
-Dependencies are minimal (`flask`, `requests`) and managed in `requirements.txt`.
+Dependencies are minimal (`flask`, `requests`, `claude-code-sdk`) and managed in `requirements.txt`.
 
 **Running services:**
 
@@ -161,11 +166,14 @@ Each session file contains:
 
 | Field | What it tells you |
 |-------|-------------------|
+| `id` | Unique session identifier (8-char hex) |
+| `timestamp` | ISO 8601 timestamp of the request |
 | `user_query` | The original user message (truncated to 500 chars) |
+| `client_messages` | Full original messages array from the client |
 | `route` | Which route was chosen (`primary`, `xai`, `enrich`, `meta`) |
 | `classification_raw` | The raw classifier output (e.g., `"SIMPLE"`) |
 | `classification_ms` | How long classification took |
-| `steps[]` | Ordered list of API calls made — each with `provider`, `url`, `model`, `messages_sent`, `response_content`, `duration_ms`, `status` |
+| `steps[]` | Ordered list of API calls made — each with `step`, `provider`, `url`, `model`, `messages_sent`, `params`, `response_content`, `duration_ms`, `status`, `finish_reason` |
 | `total_ms` | End-to-end request time |
 | `error` | Error message if the request failed, `null` otherwise |
 

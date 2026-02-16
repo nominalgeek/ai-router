@@ -156,7 +156,7 @@ flowchart TD
 | `/health` | GET | Aggregated health check (router + primary + optional xAI) |
 | `/v1/chat/completions` | POST | Main chat endpoint with auto-routing |
 | `/v1/completions` | POST | Legacy completions passthrough |
-| `/v1/models` | GET | List models from all backends |
+| `/v1/models` | GET | List available models (single virtual model) |
 | `/api/route` | POST | Explicit routing control for testing |
 | `/stats` | GET | Routing statistics (placeholder) |
 | `/router/*` | * | Direct access to vLLM router (Orchestrator 8B) — Traefik strip-prefix |

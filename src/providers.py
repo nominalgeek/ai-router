@@ -154,7 +154,9 @@ def determine_route(messages: list, session: SessionLogger = None) -> str:
         # Strip closed blocks first, then any unclosed trailing block (the
         # model ran out of tokens mid-reasoning).  What remains should be
         # just the classification word.
-        message = result['choices'][0]['message']
+        choice = result['choices'][0]
+        finish_reason = choice.get('finish_reason')
+        message = choice['message']
         raw = (message.get('content') or message.get('reasoning_content') or '').strip()
         decision = re.sub(r'<think>.*?</think>', '', raw, flags=re.DOTALL | re.IGNORECASE)
         decision = re.sub(r'<think>.*', '', decision, flags=re.DOTALL | re.IGNORECASE)
@@ -177,7 +179,7 @@ def determine_route(messages: list, session: SessionLogger = None) -> str:
             logger.warning(f"Routing classification unclear: '{decision}', defaulting to primary")
 
         if session:
-            session.end_step(status=response.status_code, response_content=raw)
+            session.end_step(status=response.status_code, response_content=raw, finish_reason=finish_reason)
             session.set_route(route, decision, classify_ms)
         return route
 
@@ -365,9 +367,11 @@ def forward_request(target_url: str, path: str, data: Dict[Any, Any], route: str
                 # Extract the assistant's response text for the log.
                 # Reasoning models may put all output in reasoning_content
                 # with content=null (especially when max_tokens is tight).
-                msg = resp_json.get('choices', [{}])[0].get('message', {})
+                choice = resp_json.get('choices', [{}])[0]
+                finish_reason = choice.get('finish_reason')
+                msg = choice.get('message', {})
                 resp_text = msg.get('content') or msg.get('reasoning_content') or ''
-                session.end_step(status=response.status_code, response_content=resp_text or response_body.decode('utf-8', errors='replace'))
+                session.end_step(status=response.status_code, response_content=resp_text or response_body.decode('utf-8', errors='replace'), finish_reason=finish_reason)
             except (json.JSONDecodeError, IndexError, KeyError):
                 session.end_step(status=response.status_code, response_content=response_body.decode('utf-8', errors='replace'))
 
