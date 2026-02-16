@@ -12,6 +12,7 @@ from src.config import (
     ROUTER_URL, PRIMARY_URL,
     XAI_API_KEY, XAI_API_URL, XAI_MODEL,
     ROUTER_MODEL, PRIMARY_MODEL,
+    PRIMARY_SYSTEM_PROMPT,
     ROUTING_SYSTEM_PROMPT, ROUTING_PROMPT,
     ENRICHMENT_SYSTEM_PROMPT,
     XAI_SEARCH_TOOLS,
@@ -307,9 +308,11 @@ def forward_request(target_url: str, path: str, data: Dict[Any, Any], route: str
         url = f"{target_url}{path}"
         logger.info(f"Forwarding request to {url}")
 
-        # Inject temporal context into the first system message, or prepend one
+        # Inject temporal context + primary system prompt into the first
+        # system message, or prepend one.  The behavioral instruction (e.g.
+        # "don't echo the date") lives in config/prompts/primary/system.md.
         if 'messages' in data:
-            context_line = date_context()
+            context_line = f"{date_context()}\n{PRIMARY_SYSTEM_PROMPT}"
             first_system = next((m for m in data['messages'] if m.get('role') == 'system'), None)
             if first_system:
                 first_system['content'] = f"{context_line}\n\n{first_system['content']}"
@@ -358,8 +361,11 @@ def forward_request(target_url: str, path: str, data: Dict[Any, Any], route: str
         if session:
             try:
                 resp_json = json.loads(response_body)
-                # Extract the assistant's response text for the log
-                resp_text = resp_json.get('choices', [{}])[0].get('message', {}).get('content', '')
+                # Extract the assistant's response text for the log.
+                # Reasoning models may put all output in reasoning_content
+                # with content=null (especially when max_tokens is tight).
+                msg = resp_json.get('choices', [{}])[0].get('message', {})
+                resp_text = msg.get('content') or msg.get('reasoning_content') or ''
                 session.end_step(status=response.status_code, response_content=resp_text or response_body.decode('utf-8', errors='replace'))
             except (json.JSONDecodeError, IndexError, KeyError):
                 session.end_step(status=response.status_code, response_content=response_body.decode('utf-8', errors='replace'))

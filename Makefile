@@ -1,7 +1,8 @@
-.PHONY: help up down restart logs logs-router logs-primary logs-ai \
-       status health models gpu stats clean clean-all backup restore \
+.PHONY: help up down restart restart-all restart-gpu \
+       logs logs-router logs-primary logs-ai \
+       status health models gpu gpu-watch up-watch stats clean clean-all backup restore \
        venv test benchmark test-router test-primary pull update \
-       shell-router shell-primary shell-ai validate network volumes prune
+       shell-router shell-primary shell-ai validate network volumes prune review
 
 VENV_DIR := .venv
 PYTHON := $(VENV_DIR)/bin/python
@@ -22,14 +23,51 @@ $(VENV_DIR)/bin/activate: requirements.txt
 	@touch $(VENV_DIR)/bin/activate
 	@echo "Activate with: source $(VENV_DIR)/bin/activate"
 
-up: ## Start all services
-	docker compose up -d
+up: ## Start all services (sequential GPU startup to avoid VRAM conflicts)
+	@echo "Starting traefik..."
+	docker compose up -d traefik
+	@echo "Starting router model (small, loads first)..."
+	docker compose up -d router
+	@echo "Waiting for router to be healthy..."
+	@until docker inspect --format='{{.State.Health.Status}}' vllm-router 2>/dev/null | grep -q healthy; do \
+		sleep 5; echo "  router loading..."; \
+	done
+	@echo "✓ Router healthy — starting primary model..."
+	docker compose up -d primary
+	@echo "Waiting for primary to be healthy..."
+	@until docker inspect --format='{{.State.Health.Status}}' vllm-primary 2>/dev/null | grep -q healthy; do \
+		sleep 5; echo "  primary loading..."; \
+	done
+	@echo "✓ Primary healthy — starting ai-router..."
+	docker compose up -d ai-router
+	@echo "✓ All services started"
 
-down: ## Stop all services
+down: ## Stop all services (GPU containers first to release VRAM cleanly)
 	docker compose down
+	@echo "Waiting for GPU memory to release..."
+	@while nvidia-smi --query-compute-apps=pid --format=csv,noheader 2>/dev/null | grep -q .; do \
+		sleep 2; \
+	done
 
-restart: ## Restart all services
-	docker compose restart
+restart: ## Restart ai-router only (no VRAM impact — use for code/prompt changes)
+	docker compose restart ai-router
+
+restart-all: down up ## Restart everything (sequential to avoid VRAM conflicts)
+
+restart-gpu: ## Restart only GPU containers (sequential to avoid VRAM conflicts)
+	@echo "Stopping GPU containers..."
+	docker compose stop primary router
+	@echo "Waiting for GPU memory to release..."
+	@while nvidia-smi --query-compute-apps=pid --format=csv,noheader 2>/dev/null | grep -q .; do \
+		sleep 2; \
+	done
+	@echo "GPU clear — starting router model..."
+	docker compose start router
+	@until docker inspect --format='{{.State.Health.Status}}' vllm-router 2>/dev/null | grep -q healthy; do \
+		sleep 5; echo "  router loading..."; \
+	done
+	@echo "✓ Router healthy — starting primary model..."
+	docker compose start primary
 
 logs: ## Follow logs for all services
 	docker compose logs -f
@@ -79,6 +117,53 @@ models: ## List available models
 gpu: ## Show GPU status
 	nvidia-smi
 
+gpu-watch: ## Poll VRAM usage every 5s (Ctrl-C to stop)
+	@echo "Polling VRAM every 5s — Ctrl-C to stop"
+	@echo "timestamp,gpu_util%,vram_used_MiB,vram_total_MiB,vram_used%" ; \
+	while true; do \
+		nvidia-smi --query-gpu=timestamp,utilization.gpu,memory.used,memory.total,memory.free \
+			--format=csv,noheader,nounits 2>/dev/null | \
+		awk -F', ' '{used=$$3; total=$$4; pct=used/total*100; printf "%s  gpu=%s%%  vram=%s/%s MiB (%.1f%%)\n", $$1, $$2, $$3, $$4, pct}'; \
+		sleep 5; \
+	done
+
+up-watch: ## Start all services while logging VRAM to logs/vram-startup.log
+	@mkdir -p logs
+	@echo "Starting VRAM monitor (logging to logs/vram-startup.log)..."
+	@( echo "=== VRAM startup trace $$(date -Iseconds) ===" ; \
+	   while true; do \
+	     nvidia-smi --query-gpu=timestamp,memory.used,memory.total \
+	       --format=csv,noheader,nounits 2>/dev/null | \
+	     awk -F', ' '{pct=$$2/$$3*100; printf "%s  %s/%s MiB (%.1f%%)\n", $$1, $$2, $$3, pct}'; \
+	     sleep 3; \
+	   done ) > logs/vram-startup.log 2>&1 & \
+	WATCH_PID=$$!; \
+	echo "  monitor PID: $$WATCH_PID"; \
+	echo "Starting traefik..."; \
+	docker compose up -d traefik; \
+	echo "Starting router model (small, loads first)..."; \
+	docker compose up -d router; \
+	echo "Waiting for router to be healthy..."; \
+	until docker inspect --format='{{.State.Health.Status}}' vllm-router 2>/dev/null | grep -q healthy; do \
+		sleep 5; echo "  router loading..."; \
+	done; \
+	echo "✓ Router healthy — VRAM after router:"; \
+	tail -1 logs/vram-startup.log; \
+	echo "Starting primary model..."; \
+	docker compose up -d primary; \
+	echo "Waiting for primary to be healthy..."; \
+	until docker inspect --format='{{.State.Health.Status}}' vllm-primary 2>/dev/null | grep -q healthy; do \
+		sleep 5; echo "  primary loading..."; \
+	done; \
+	echo "✓ Primary healthy — VRAM after primary:"; \
+	tail -1 logs/vram-startup.log; \
+	echo "Starting ai-router..."; \
+	docker compose up -d ai-router; \
+	echo "✓ All services started — stopping VRAM monitor"; \
+	kill $$WATCH_PID 2>/dev/null; \
+	echo ""; \
+	echo "Full VRAM trace: logs/vram-startup.log"
+
 stats: ## Show container resource usage
 	docker stats --no-stream
 
@@ -111,6 +196,21 @@ test: ## Run full test suite
 
 benchmark: ## Run benchmark suite
 	./Benchmark
+
+review: ## Run session-review agent on accumulated logs
+	@if [ ! -d logs/sessions ] || [ -z "$$(ls logs/sessions/*.json 2>/dev/null)" ]; then \
+		echo "No session logs found in logs/sessions/. Run some traffic first."; \
+		exit 1; \
+	fi
+	@echo "Starting session review agent..."
+	@echo "Session logs: $$(ls logs/sessions/*.json | wc -l) files"
+	cat agents/session-review/AGENT.md | claude --print --verbose \
+		--allowedTools "Read" \
+		--allowedTools "Glob" \
+		--allowedTools "Grep" \
+		--allowedTools "Write(logs/reviews/*)" \
+		--allowedTools "Edit(config/prompts/**)" \
+		--allowedTools "Bash(mkdir -p logs/reviews)"
 
 test-router: ## Test router model with sample request
 	curl -X POST http://localhost/router/v1/chat/completions \

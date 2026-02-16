@@ -236,7 +236,7 @@ echo ""
 
 enrich_data='{
   "messages": [{"role": "user", "content": "What is the current weather in Tokyo right now?"}],
-  "max_tokens": 200,
+  "max_tokens": 500,
   "temperature": 0.7
 }'
 
@@ -311,8 +311,106 @@ fi
 
 echo ""
 
+# Test lengthy MODERATE queries (validates --max-model-len on router isn't too tight)
+echo "10. Testing lengthy moderate query (code review)..."
+echo ""
+
+# ~1500 chars of code — should classify as MODERATE and route to primary.
+# Also acts as a canary: if the router's --max-model-len is too small,
+# the classification request will fail with HTTP 400.
+lengthy_code_data='{
+  "messages": [{"role": "user", "content": "Review this Python code and suggest improvements:\n\nimport os\nimport sys\nimport json\nimport logging\nfrom pathlib import Path\nfrom datetime import datetime, timedelta\nfrom collections import defaultdict\n\nlogger = logging.getLogger(__name__)\n\nclass SessionAnalyzer:\n    def __init__(self, log_dir, max_age_days=7):\n        self.log_dir = Path(log_dir)\n        self.max_age_days = max_age_days\n        self.stats = defaultdict(int)\n        self.errors = []\n        self.latencies = defaultdict(list)\n\n    def scan(self):\n        cutoff = datetime.now() - timedelta(days=self.max_age_days)\n        for path in sorted(self.log_dir.glob(\"*.json\")):\n            try:\n                with open(path) as f:\n                    session = json.load(f)\n                ts = datetime.fromisoformat(session.get(\"timestamp\", \"\"))\n                if ts < cutoff:\n                    continue\n                route = session.get(\"route\", \"unknown\")\n                self.stats[route] += 1\n                if session.get(\"error\"):\n                    self.errors.append({\"file\": path.name, \"error\": session[\"error\"], \"route\": route})\n                for step in session.get(\"steps\", []):\n                    if \"duration_ms\" in step:\n                        self.latencies[step.get(\"provider\", \"unknown\")].append(step[\"duration_ms\"])\n            except (json.JSONDecodeError, KeyError, ValueError) as e:\n                logger.warning(f\"Skipping {path.name}: {e}\")\n\n    def summarize(self):\n        total = sum(self.stats.values())\n        summary = {\"total_sessions\": total, \"by_route\": dict(self.stats), \"error_count\": len(self.errors)}\n        for provider, vals in self.latencies.items():\n            summary[f\"avg_latency_{provider}_ms\"] = round(sum(vals) / len(vals), 1)\n        return summary\n\nif __name__ == \"__main__\":\n    analyzer = SessionAnalyzer(sys.argv[1] if len(sys.argv) > 1 else \"logs/sessions\")\n    analyzer.scan()\n    print(json.dumps(analyzer.summarize(), indent=2))"}],
+  "max_tokens": 300,
+  "temperature": 0.7
+}'
+
+echo "Sending lengthy code review (~1500 chars of Python code)..."
+response=$(curl -s -X POST "$BASE_URL/v1/chat/completions" \
+    -H "Content-Type: application/json" \
+    -d "$lengthy_code_data")
+
+content=$(echo "$response" | jq -r '.choices[0].message.content // .choices[0].message.reasoning_content // empty')
+model=$(echo "$response" | jq -r '.model // empty')
+error_msg=$(echo "$response" | jq -r '.error.message // empty')
+
+if [ -n "$error_msg" ] && [ "$error_msg" != "null" ]; then
+    # Classification failed — likely --max-model-len too small for this input
+    echo -e "${RED}✗ Lengthy code review FAILED (classification error)${NC}"
+    echo "Error: $error_msg"
+    echo "This may indicate --max-model-len on the router is too small."
+    FAIL=$((FAIL + 1))
+elif [ -n "$content" ] && [ "$content" != "null" ]; then
+    echo -e "${GREEN}✓ Lengthy code review successful${NC}"
+    PASS=$((PASS + 1))
+    echo "Response: $(echo "$content" | head -c 100)..."
+
+    if [[ "$model" == *"Nemotron-3-Nano-30B"* ]]; then
+        echo -e "${GREEN}✓ Correctly routed to primary model (not escalated to xAI)${NC}"
+        PASS=$((PASS + 1))
+    elif [[ "$model" == *"grok"* ]]; then
+        echo -e "${YELLOW}⚠ Routed to xAI — misclassified as COMPLEX (expected MODERATE)${NC}"
+        WARN=$((WARN + 1))
+    else
+        echo -e "${YELLOW}⚠ Routed to: $model (expected Nano 30B)${NC}"
+        WARN=$((WARN + 1))
+    fi
+else
+    echo -e "${RED}✗ Lengthy code review failed${NC}"
+    FAIL=$((FAIL + 1))
+    echo "Response: $response"
+fi
+
+echo ""
+
+# Test lengthy SIMPLE query — a verbose but fundamentally basic question
+echo "11. Testing lengthy simple query (verbose but basic)..."
+echo ""
+
+lengthy_simple_data='{
+  "messages": [{"role": "user", "content": "I have been learning programming for about six months now and I started with JavaScript because a friend recommended it, then moved on to Python which I find much easier to read and understand. I have been working through various tutorials and online courses and I feel like I have a decent grasp of the basics like variables, loops, conditionals, functions, and basic data structures. I have also started learning about object-oriented programming and I understand classes and inheritance at a surface level. My question is pretty straightforward: what is a dictionary in Python and how is it different from a list? I know they are both used to store collections of data but I get confused about when to use which one. Can you explain the key differences in simple terms?"}],
+  "max_tokens": 300,
+  "temperature": 0.7
+}'
+
+echo "Sending lengthy but basic query (~700 chars, asks a simple question)..."
+response=$(curl -s -X POST "$BASE_URL/v1/chat/completions" \
+    -H "Content-Type: application/json" \
+    -d "$lengthy_simple_data")
+
+content=$(echo "$response" | jq -r '.choices[0].message.content // .choices[0].message.reasoning_content // empty')
+model=$(echo "$response" | jq -r '.model // empty')
+error_msg=$(echo "$response" | jq -r '.error.message // empty')
+
+if [ -n "$error_msg" ] && [ "$error_msg" != "null" ]; then
+    echo -e "${RED}✗ Lengthy simple query FAILED (classification error)${NC}"
+    echo "Error: $error_msg"
+    echo "This may indicate --max-model-len on the router is too small."
+    FAIL=$((FAIL + 1))
+elif [ -n "$content" ] && [ "$content" != "null" ]; then
+    echo -e "${GREEN}✓ Lengthy simple query successful${NC}"
+    PASS=$((PASS + 1))
+    echo "Response: $(echo "$content" | head -c 100)..."
+
+    if [[ "$model" == *"Nemotron-3-Nano-30B"* ]]; then
+        echo -e "${GREEN}✓ Correctly routed to primary model (not escalated to xAI)${NC}"
+        PASS=$((PASS + 1))
+    elif [[ "$model" == *"grok"* ]]; then
+        echo -e "${YELLOW}⚠ Routed to xAI — misclassified as COMPLEX (expected SIMPLE/MODERATE)${NC}"
+        WARN=$((WARN + 1))
+    else
+        echo -e "${YELLOW}⚠ Routed to: $model (expected Nano 30B)${NC}"
+        WARN=$((WARN + 1))
+    fi
+else
+    echo -e "${RED}✗ Lengthy simple query failed${NC}"
+    FAIL=$((FAIL + 1))
+    echo "Response: $response"
+fi
+
+echo ""
+
 # Test direct router access
-echo "10. Testing direct model access..."
+echo "12. Testing direct model access..."
 echo ""
 
 router_data='{
@@ -364,7 +462,7 @@ fi
 echo ""
 
 # Test additional endpoints
-echo "11. Testing additional endpoints..."
+echo "13. Testing additional endpoints..."
 echo ""
 
 test_endpoint "Root Endpoint" "$BASE_URL/"
@@ -374,7 +472,7 @@ test_endpoint "Explicit Route API" "$BASE_URL/api/route" "POST" '{"route": "prim
 echo ""
 
 # Test Traefik dashboard
-echo "12. Testing Traefik dashboard..."
+echo "14. Testing Traefik dashboard..."
 echo ""
 
 if curl -s "http://localhost:8080/api/overview" | jq . > /dev/null 2>&1; then

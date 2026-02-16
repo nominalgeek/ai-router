@@ -39,6 +39,13 @@ CLASSIFY_CONTEXT_BUDGET = int(os.getenv('CLASSIFY_CONTEXT_BUDGET', '4000'))
 # classification word.  Increase if swapping to a more verbose reasoning model.
 CLASSIFY_MAX_TOKENS = int(os.getenv('CLASSIFY_MAX_TOKENS', '512'))
 
+# Minimum max_tokens for enrichment route responses.  The enrich pipeline
+# injects ~500-800 tokens of retrieved context into the system prompt, which
+# eats into the generation budget.  With a reasoning model, low max_tokens
+# means all output goes to chain-of-thought with nothing left for the actual
+# answer (content=null).  This floor ensures enough room for both.
+ENRICH_MIN_MAX_TOKENS = int(os.getenv('ENRICH_MIN_MAX_TOKENS', '1024'))
+
 # Timezone configuration (defaults to US Pacific / Happy Valley, OR)
 LOCAL_TZ = ZoneInfo(os.getenv('TZ', 'America/Los_Angeles'))
 
@@ -102,13 +109,24 @@ def date_context():
 # Prompt file paths
 ROUTING_PROMPT_PATH = os.getenv('ROUTING_PROMPT_PATH', '/app/config/prompts/routing/request.md')
 ROUTING_SYSTEM_PROMPT_PATH = os.getenv('ROUTING_SYSTEM_PROMPT_PATH', '/app/config/prompts/routing/system.md')
+PRIMARY_SYSTEM_PROMPT_PATH = os.getenv('PRIMARY_SYSTEM_PROMPT_PATH', '/app/config/prompts/primary/system.md')
 ENRICHMENT_SYSTEM_PROMPT_PATH = os.getenv('ENRICHMENT_SYSTEM_PROMPT_PATH', '/app/config/prompts/enrichment/system.md')
 ENRICHMENT_INJECTION_PROMPT_PATH = os.getenv('ENRICHMENT_INJECTION_PROMPT_PATH', '/app/config/prompts/enrichment/injection.md')
 META_SYSTEM_PROMPT_PATH = os.getenv('META_SYSTEM_PROMPT_PATH', '/app/config/prompts/meta/system.md')
 
 
 def load_prompt_file(path, fallback, label):
-    """Load a prompt template from an external markdown file."""
+    """
+    Load a prompt template from an external markdown file.
+
+    The fallback string is a hardcoded default that keeps the router
+    functional if the prompt file is missing (e.g. running outside
+    Docker without the config/ volume mounted).  This is an intentional
+    exception to the "no natural-language instructions in Python" rule —
+    the authoritative prompts live in config/prompts/, and the fallbacks
+    exist only as a safety net so the service degrades gracefully instead
+    of crashing.  A log error is emitted whenever a fallback is used.
+    """
     try:
         with open(path, 'r') as f:
             prompt = f.read().strip()
@@ -118,6 +136,17 @@ def load_prompt_file(path, fallback, label):
         logger.error(f"{label} not found at {path}, using fallback")
         return fallback
 
+
+# --- Prompt loading ---
+# Authoritative prompts live in config/prompts/*.md (see project structure).
+# The second argument to each call below is a hardcoded fallback — see the
+# load_prompt_file docstring for why these exist despite the externalization rule.
+
+PRIMARY_SYSTEM_PROMPT = load_prompt_file(
+    PRIMARY_SYSTEM_PROMPT_PATH,
+    'Use this as background context only — do not repeat or display it in your response.',
+    'primary system prompt'
+)
 
 ROUTING_SYSTEM_PROMPT = load_prompt_file(
     ROUTING_SYSTEM_PROMPT_PATH,

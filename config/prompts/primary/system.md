@@ -1,0 +1,1 @@
+Use this as background context only — do not repeat or display it in your response.

@@ -45,10 +45,10 @@ Both vLLM containers share GPU 0. The split is configured in `docker-compose.yml
 
 | Container | Model | VRAM budget | Context length |
 |-----------|-------|-------------|----------------|
-| `vllm-router` | Nemotron Orchestrator 8B (AWQ 4-bit) | ~14% (~13 GB) | 4,096 tokens |
-| `vllm-primary` | Nemotron Nano 30B (fp8 KV cache) | ~80% (~77 GB) | 32,768 tokens |
+| `vllm-router` | Nemotron Orchestrator 8B (AWQ 4-bit) | ~14% (~13 GB) | 2,048 tokens |
+| `vllm-primary` | Nemotron Nano 30B (fp8 KV cache) | ~65% (~64 GB) | 32,768 tokens |
 
-~6% VRAM remains unallocated as headroom. The router model weights are ~6 GB after AWQ 4-bit quantization, leaving sufficient KV cache within its 14% budget. The bulk of the GPU budget goes to the primary model's KV cache for long-context requests.
+Configured total is 0.79 (14% + 65%), but actual VRAM usage is ~89% due to CUDA context overhead (~10%). This leaves ~11% (~10 GB) free as headroom. The router model weights are ~6 GB after AWQ 4-bit quantization; fp8_e4m3 KV cache and prefix caching keep memory efficient within the 14% budget. The primary also uses fp8_e4m3 KV cache, which lets it maintain 32K context within its reduced 65% budget.
 
 **Models:**
 
@@ -75,6 +75,8 @@ src/
   config.py                     # Env vars, prompt loading, constants
   session_logger.py             # Per-request JSON session logs
 config/prompts/
+  primary/
+    system.md                   # Base system prompt injected into every forwarded request
   routing/
     system.md                   # Classification system prompt for Orchestrator 8B
     request.md                  # Classification request template
@@ -88,6 +90,9 @@ Makefile                        # Common operations (up, down, test, health, etc
 traefik/                        # Traefik reverse proxy config
 docs/
   architecture.md               # Mermaid architecture diagrams
+agents/
+  session-review/
+    AGENT.md                    # Task spec for autonomous session-review agent
 Benchmark                       # Bash script — latency, throughput, concurrency benchmarks
 Test                            # Bash script — integration test suite (health, routing, endpoints)
 logs/sessions/                  # Auto-generated per-request JSON session logs
@@ -98,7 +103,7 @@ logs/sessions/                  # Auto-generated per-request JSON session logs
 - **Readability first.** Write comments that explain both *why* something exists and *what* it does — assume the reader is a human learning how routing systems work, not someone skimming for an API signature.
 - **Keep files small.** Look for logical separations and break things up before any single file gets unwieldy. Current split: `config.py` (env/prompts), `providers.py` (classification + forwarding), `app.py` (Flask routes + pipeline orchestration), `session_logger.py` (logging).
 - **Keep it followable.** This is a learning project — the code should be simple enough to trace end-to-end without jumping through layers of abstraction. That sometimes tensions with keeping files small; balance by splitting along clear logical boundaries, not by introducing indirection.
-- **Externalize configuration from code.** Prompts live in markdown files under `config/prompts/`, env vars drive all connection strings and feature flags, model names are configurable. Changing behavior shouldn't require editing Python when possible.
+- **Externalize configuration from code.** Prompts live in markdown files under `config/prompts/`, env vars drive all connection strings and feature flags, model names are configurable. Changing behavior shouldn't require editing Python when possible. This applies to *all* natural-language instructions sent to models — including behavioral guidance like "don't echo the system prompt." If it's a sentence a model reads, it belongs in a prompt file, not a Python string. **One deliberate exception:** `load_prompt_file()` in `config.py` accepts a hardcoded fallback string per prompt. These exist solely as a safety net so the service degrades gracefully (with a logged error) if a prompt file is missing — e.g. when running outside Docker without the `config/` volume. The authoritative prompts are always the markdown files; fallbacks should never be the primary path and should be kept roughly in sync with their corresponding files.
 - **Strict separation of concerns.** Each component has one job. The router model classifies — it does not generate responses. The primary model generates — it does not classify. The enrichment pipeline fetches context — it does not answer questions. The Flask app orchestrates — it does not contain business logic. This isn't just good architecture; it's a defense against complexity creep. When an AI assistant (or a human in a flow state) is generating code, the temptation is to let responsibilities blur — "just add this one thing here." Resist. If a change crosses a boundary, it belongs in a different component. Every function, file, and service should be explainable in one sentence. If it can't be, it's doing too much.
 
 ## Architecture
@@ -167,4 +172,8 @@ Each session file contains:
 - **Latency outliers**: `classification_ms` or step `duration_ms` values that seem abnormally high
 - **Meta pipeline issues**: Truncation warnings in logs, or meta-prompts that weren't detected and went through classification instead
 
-The intended workflow: use the router daily via Open WebUI, let session logs accumulate, then have an autonomous agent review them — surfacing issues and either refining `config/prompts/` templates or flagging decisions that need human judgment. Auto-rotation keeps logs to 7 days / 5000 files.
+**Validating infrastructure changes:**
+
+When changing vLLM parameters, token limits, prompt templates, or other config that affects what the models see, always check session logs after deploying to confirm nothing broke. Things like `--max-model-len`, `CLASSIFY_MAX_TOKENS`, or prompt template size interact — a change to one can silently break another if the total token count exceeds the budget. Let real traffic run for a day, then look for HTTP 400s, classification errors, or truncation warnings in the session files.
+
+The intended workflow: use the router daily via Open WebUI, let session logs accumulate, then have an autonomous agent review them — surfacing issues and either refining `config/prompts/` templates or flagging decisions that need human judgment. Auto-rotation keeps logs to 7 days / 5000 files. See `agents/session-review/AGENT.md` for the full agent task specification.

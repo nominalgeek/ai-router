@@ -77,13 +77,15 @@ services:
       - HF_TOKEN=${HF_TOKEN}
     command: >
       --model cyankiwi/Nemotron-Orchestrator-8B-AWQ-4bit
-      
-      --kv-cache-dtype auto
+      --dtype half
+      --kv-cache-dtype fp8_e4m3
       --gpu-memory-utilization 0.14
-      --max-model-len 4096
+      --max-model-len 2048
       --port 8001
       --enforce-eager
       --trust-remote-code
+      --enable-prefix-caching
+      --disable-log-stats
     volumes:
       - hf-cache:/root/.cache/huggingface
     deploy:
@@ -126,9 +128,10 @@ services:
     command: >
       --model unsloth/NVIDIA-Nemotron-3-Nano-30B-A3B-NVFP4
       --dtype bfloat16
-      --kv-cache-dtype fp8
-      --gpu-memory-utilization 0.8
+      --kv-cache-dtype fp8_e4m3
+      --gpu-memory-utilization 0.65
       --max-model-len 32768
+      --disable-log-stats
       --port 8000
       --enforce-eager
       --trust-remote-code
@@ -145,7 +148,7 @@ services:
               device_ids: ['0']  # Same GPU as router
               capabilities: [gpu]
         limits:
-          memory: 24G  # Larger model needs more memory
+          memory: 48G  # Larger model needs more memory
     healthcheck:
       test: ["CMD-SHELL", "curl -f http://localhost:8000/health || exit 1"]
       interval: 30s

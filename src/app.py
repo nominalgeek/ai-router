@@ -11,6 +11,7 @@ from src.config import (
     VIRTUAL_MODEL,
     ENRICHMENT_INJECTION_PROMPT,
     META_SYSTEM_PROMPT,
+    ENRICH_MIN_MAX_TOKENS,
 )
 from src.session_logger import SessionLogger
 from src.providers import (
@@ -107,6 +108,16 @@ def chat_completions():
                 logger.info("Enrichment context injected, forwarding to primary model")
             else:
                 logger.warning("Enrichment context unavailable, forwarding to primary model without context")
+
+            # Enrichment injects ~500-800 tokens of context into the system
+            # prompt.  With a reasoning model, a low client max_tokens means
+            # chain-of-thought consumes the entire budget before producing
+            # visible output (content=null).  Enforce a floor so there's
+            # always room for both reasoning and the answer.
+            client_max = data.get('max_tokens') or 0
+            if client_max < ENRICH_MIN_MAX_TOKENS:
+                logger.info(f"Enrich route: raising max_tokens from {client_max} to {ENRICH_MIN_MAX_TOKENS}")
+                data['max_tokens'] = ENRICH_MIN_MAX_TOKENS
 
             data['_route'] = 'enrich'
             result = forward_request(PRIMARY_URL, '/v1/chat/completions', data, 'primary', session=session)
