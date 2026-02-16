@@ -22,6 +22,10 @@ XAI_MODEL = os.getenv('XAI_MODEL', 'grok-4-1-fast-reasoning')
 ROUTER_MODEL = os.getenv('ROUTER_MODEL', 'nvidia/Nemotron-Mini-4B-Instruct')
 PRIMARY_MODEL = os.getenv('PRIMARY_MODEL', 'unsloth/NVIDIA-Nemotron-3-Nano-30B-A3B-NVFP4')
 
+# Virtual model name presented to external consumers (e.g. Open WebUI).
+# Callers see this single model and the routing is invisible to them.
+VIRTUAL_MODEL = os.getenv('VIRTUAL_MODEL', 'ai-router')
+
 # xAI search tools for enrichment (comma-separated: "web_search,x_search" or "" to disable)
 XAI_SEARCH_TOOLS = os.getenv('XAI_SEARCH_TOOLS', 'web_search,x_search')
 

@@ -8,6 +8,7 @@ from src.config import (
     ROUTER_URL, PRIMARY_URL,
     XAI_API_KEY, XAI_API_URL, XAI_MODEL,
     ROUTER_MODEL, PRIMARY_MODEL,
+    VIRTUAL_MODEL,
     ENRICHMENT_INJECTION_PROMPT,
     META_SYSTEM_PROMPT,
 )
@@ -171,25 +172,19 @@ def completions():
 
 @app.route('/v1/models', methods=['GET'])
 def list_models():
-    """List available models from both services."""
-    try:
-        router_models = requests.get(f"{ROUTER_URL}/v1/models", timeout=5).json()
-        primary_models = requests.get(f"{PRIMARY_URL}/v1/models", timeout=5).json()
-
-        # Combine model lists
-        all_models = {
-            'object': 'list',
-            'data': router_models.get('data', []) + primary_models.get('data', [])
-        }
-
-        return jsonify(all_models)
-
-    except Exception as e:
-        logger.error(f"Error listing models: {str(e)}")
-        return jsonify({
-            'error': 'Internal error',
-            'message': str(e)
-        }), 500
+    """
+    Present a single virtual model to external consumers.
+    Callers (e.g. Open WebUI) see one model — routing is invisible.
+    The virtual model name is configurable via VIRTUAL_MODEL env var.
+    """
+    return jsonify({
+        'object': 'list',
+        'data': [{
+            'id': VIRTUAL_MODEL,
+            'object': 'model',
+            'owned_by': 'ai-router',
+        }]
+    })
 
 
 @app.route('/api/route', methods=['POST'])
@@ -250,6 +245,7 @@ def root():
     return jsonify({
         'service': 'AI Router',
         'version': '1.0.0',
+        'model': VIRTUAL_MODEL,
         'endpoints': {
             '/health': 'Health check',
             '/v1/chat/completions': 'Chat completions with auto-routing',
@@ -257,10 +253,6 @@ def root():
             '/v1/models': 'List available models',
             '/api/route': 'Explicit routing control',
             '/stats': 'Routing statistics'
-        },
-        'models': {
-            'router': ROUTER_URL,
-            'primary': PRIMARY_URL
         }
     })
 
