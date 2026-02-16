@@ -36,6 +36,8 @@ PRIMARY_MODEL = os.getenv('PRIMARY_MODEL', 'unsloth/NVIDIA-Nemotron-3-Nano-30B-A
 # Load routing prompts from external files
 ROUTING_PROMPT_PATH = os.getenv('ROUTING_PROMPT_PATH', '/app/config/routing-prompt.md')
 ROUTING_SYSTEM_PROMPT_PATH = os.getenv('ROUTING_SYSTEM_PROMPT_PATH', '/app/config/routing-system-prompt.md')
+ENRICHMENT_SYSTEM_PROMPT_PATH = os.getenv('ENRICHMENT_SYSTEM_PROMPT_PATH', '/app/config/enrichment-system-prompt.md')
+ENRICHMENT_INJECTION_PROMPT_PATH = os.getenv('ENRICHMENT_INJECTION_PROMPT_PATH', '/app/config/enrichment-injection-prompt.md')
 
 def load_prompt_file(path, fallback, label):
     """Load a prompt template from an external markdown file."""
@@ -56,10 +58,22 @@ ROUTING_SYSTEM_PROMPT = load_prompt_file(
 
 ROUTING_PROMPT = load_prompt_file(
     ROUTING_PROMPT_PATH,
-    ('Classify this query as SIMPLE, MODERATE, or COMPLEX.\n'
+    ('Classify this query as SIMPLE, MODERATE, COMPLEX, or ENRICH.\n'
      'User query: "{query}"\n'
-     'Respond with ONLY ONE WORD: SIMPLE, MODERATE, or COMPLEX'),
+     'Respond with ONLY ONE WORD: SIMPLE, MODERATE, COMPLEX, or ENRICH'),
     'routing prompt'
+)
+
+ENRICHMENT_SYSTEM_PROMPT = load_prompt_file(
+    ENRICHMENT_SYSTEM_PROMPT_PATH,
+    'You are a real-time information retrieval assistant. Provide concise, factual, current information relevant to the user\'s query. Do not answer the question directly — your output will be used as context for another model.',
+    'enrichment system prompt'
+)
+
+ENRICHMENT_INJECTION_PROMPT = load_prompt_file(
+    ENRICHMENT_INJECTION_PROMPT_PATH,
+    'The following is supplementary real-time context retrieved from an external source:\n\n---\n{context}\n---',
+    'enrichment injection prompt'
 )
 
 
@@ -104,7 +118,10 @@ def determine_route(messages: list) -> str:
             message = result['choices'][0]['message']
             decision = (message.get('content') or message.get('reasoning_content') or '').strip().upper()
 
-            if 'SIMPLE' in decision:
+            if 'ENRICH' in decision:
+                logger.info("Routing to enrichment pipeline: prompt-based classification (ENRICH)")
+                return 'enrich'
+            elif 'SIMPLE' in decision:
                 logger.info("Routing to router model: prompt-based classification (SIMPLE)")
                 return 'router'
             elif 'MODERATE' in decision:
@@ -124,6 +141,51 @@ def determine_route(messages: list) -> str:
     except Exception as e:
         logger.error(f"Error in prompt-based routing: {str(e)}, defaulting to primary")
         return 'primary'
+
+
+def fetch_enrichment_context(messages: list) -> Optional[str]:
+    """
+    Call xAI to retrieve current/real-time context for the user's query.
+    Returns the enrichment text, or None if the call fails.
+    """
+    last_message = messages[-1].get('content', '') if messages else ''
+
+    try:
+        response = requests.post(
+            f"{XAI_API_URL}/v1/chat/completions",
+            json={
+                "messages": [
+                    {"role": "system", "content": ENRICHMENT_SYSTEM_PROMPT},
+                    {"role": "user", "content": last_message}
+                ],
+                "model": XAI_MODEL,
+                "max_tokens": 1024,
+                "temperature": 0.0
+            },
+            headers={
+                'Content-Type': 'application/json',
+                'Authorization': f'Bearer {XAI_API_KEY}'
+            },
+            timeout=30
+        )
+
+        if response.status_code == 200:
+            result = response.json()
+            message = result['choices'][0]['message']
+            context = (message.get('content') or message.get('reasoning_content') or '').strip()
+            if context:
+                logger.info(f"Enrichment context retrieved ({len(context)} chars)")
+                return context
+
+        logger.warning(f"Enrichment call returned status {response.status_code}")
+        return None
+
+    except requests.exceptions.Timeout:
+        logger.warning("Enrichment context fetch timed out")
+        return None
+    except Exception as e:
+        logger.error(f"Error fetching enrichment context: {str(e)}")
+        return None
 
 
 def get_model_url(route: str) -> str:
@@ -269,6 +331,26 @@ def chat_completions():
         
         # Determine routing using Mini 4B classification
         route = determine_route(data['messages'])
+
+        # Enrichment pipeline: fetch context from xAI, then forward to primary
+        if route == 'enrich':
+            logger.info("Entering enrichment pipeline")
+            context = fetch_enrichment_context(data['messages'])
+
+            if context:
+                injection = ENRICHMENT_INJECTION_PROMPT.format(context=context)
+                # Prepend the enrichment context as a system message
+                data['messages'].insert(0, {
+                    "role": "system",
+                    "content": injection
+                })
+                logger.info("Enrichment context injected, forwarding to primary model")
+            else:
+                logger.warning("Enrichment context unavailable, forwarding to primary model without context")
+
+            data['_route'] = 'enrich'
+            return forward_request(PRIMARY_URL, '/v1/chat/completions', data, 'primary')
+
         target_url = get_model_url(route)
 
         # Add routing metadata to response
