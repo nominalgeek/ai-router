@@ -4,7 +4,7 @@ from flask import Flask, request, jsonify
 import requests
 
 from src.config import (
-    logger, now,
+    logger, date_context,
     ROUTER_URL, PRIMARY_URL,
     XAI_API_KEY, XAI_API_URL, XAI_MODEL,
     ROUTER_MODEL, PRIMARY_MODEL,
@@ -90,7 +90,7 @@ def chat_completions():
             if context:
                 injection = ENRICHMENT_INJECTION_PROMPT.format(
                     context=context,
-                    date=now().strftime('%B %d, %Y')
+                    date=date_context()
                 )
                 # Append enrichment context to an existing system message,
                 # or insert one before the last user message

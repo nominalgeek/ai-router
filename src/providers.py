@@ -8,7 +8,7 @@ import requests
 from typing import Dict, Any, Optional
 
 from src.config import (
-    logger, now,
+    logger, date_context,
     ROUTER_URL, PRIMARY_URL,
     XAI_API_KEY, XAI_API_URL, XAI_MODEL,
     ROUTER_MODEL, PRIMARY_MODEL,
@@ -116,7 +116,7 @@ def determine_route(messages: list, session: SessionLogger = None) -> str:
     routing_prompt = context_prefix + ROUTING_PROMPT.format(query=last_message)
 
     classify_messages = [
-        {"role": "system", "content": f"Today's date is {now().strftime('%B %d, %Y')}.\n\n{ROUTING_SYSTEM_PROMPT}"},
+        {"role": "system", "content": f"{date_context()}\n\n{ROUTING_SYSTEM_PROMPT}"},
         {"role": "user", "content": routing_prompt}
     ]
     classify_params = {"max_tokens": 10, "temperature": 0.0}
@@ -202,12 +202,10 @@ def fetch_enrichment_context(messages: list, session: SessionLogger = None) -> O
     Uses web_search and x_search tools when configured via XAI_SEARCH_TOOLS.
     Returns the enrichment text, or None if the call fails.
     """
-    current_date = now().strftime('%B %d, %Y')
-
     # Pass full conversation history so Grok can resolve references
     # (e.g. "that school") via the prior turns.
     enrich_input = [
-        {"role": "system", "content": f"Today's date is {current_date}.\n\n{ENRICHMENT_SYSTEM_PROMPT}"},
+        {"role": "system", "content": f"{date_context()}\n\n{ENRICHMENT_SYSTEM_PROMPT}"},
     ]
     for m in messages:
         role = m.get('role', 'user')
@@ -303,15 +301,14 @@ def forward_request(target_url: str, path: str, data: Dict[Any, Any], route: str
         url = f"{target_url}{path}"
         logger.info(f"Forwarding request to {url}")
 
-        # Inject current date into the first system message, or prepend one
+        # Inject temporal context into the first system message, or prepend one
         if 'messages' in data:
-            current_date = now().strftime('%B %d, %Y')
-            date_line = f"Today's date is {current_date}."
+            context_line = date_context()
             first_system = next((m for m in data['messages'] if m.get('role') == 'system'), None)
             if first_system:
-                first_system['content'] = f"{date_line}\n\n{first_system['content']}"
+                first_system['content'] = f"{context_line}\n\n{first_system['content']}"
             else:
-                data['messages'].insert(0, {"role": "system", "content": date_line})
+                data['messages'].insert(0, {"role": "system", "content": context_line})
 
         # Set up headers
         headers = {'Content-Type': 'application/json'}

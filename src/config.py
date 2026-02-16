@@ -38,6 +38,58 @@ def now():
     """Return the current timezone-aware datetime."""
     return datetime.now(LOCAL_TZ)
 
+
+def date_context():
+    """
+    Build a rich temporal context string from the current local time.
+    Injected into system messages so models can reason about "today",
+    "this morning", "the weekend", seasons, etc.
+
+    Example output:
+      Today is Saturday, February 15, 2026. It is evening (8:42 PM PST).
+      It is a weekend. The current season is winter.
+    """
+    t = now()
+
+    # Day type
+    day_type = 'weekend' if t.weekday() >= 5 else 'weekday'
+
+    # Time of day — coarse bucket the model can use for greetings,
+    # "tonight" vs "this morning", etc.
+    hour = t.hour
+    if hour < 5:
+        period = 'late night'
+    elif hour < 12:
+        period = 'morning'
+    elif hour < 17:
+        period = 'afternoon'
+    elif hour < 21:
+        period = 'evening'
+    else:
+        period = 'night'
+
+    # Season (Northern Hemisphere, meteorological convention)
+    month = t.month
+    if month in (3, 4, 5):
+        season = 'spring'
+    elif month in (6, 7, 8):
+        season = 'summer'
+    elif month in (9, 10, 11):
+        season = 'autumn'
+    else:
+        season = 'winter'
+
+    # Timezone abbreviation (e.g. "PST", "PDT")
+    tz_abbr = t.strftime('%Z')
+
+    date_str = t.strftime('%A, %B %d, %Y')          # Saturday, February 15, 2026
+    time_str = t.strftime('%-I:%M %p')               # 8:42 PM
+
+    return (
+        f"Today is {date_str}. It is {period} ({time_str} {tz_abbr}). "
+        f"It is a {day_type}. The current season is {season}."
+    )
+
 # Prompt file paths
 ROUTING_PROMPT_PATH = os.getenv('ROUTING_PROMPT_PATH', '/app/config/prompts/routing/request.md')
 ROUTING_SYSTEM_PROMPT_PATH = os.getenv('ROUTING_SYSTEM_PROMPT_PATH', '/app/config/prompts/routing/system.md')
