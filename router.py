@@ -30,6 +30,8 @@ XAI_API_KEY = os.getenv('XAI_API_KEY', '')
 XAI_API_URL = 'https://api.x.ai'  # Base URL without /v1
 # Available models: grok-4-1-fast-non-reasoning, grok-4-1-fast-reasoning, grok-code-fast-1
 XAI_MODEL = os.getenv('XAI_MODEL', 'grok-4-1-fast-reasoning')
+ROUTER_MODEL = os.getenv('ROUTER_MODEL', 'nvidia/Nemotron-Mini-4B-Instruct')
+PRIMARY_MODEL = os.getenv('PRIMARY_MODEL', 'unsloth/NVIDIA-Nemotron-3-Nano-30B-A3B-NVFP4')
 
 # Load routing prompts from external files
 ROUTING_PROMPT_PATH = os.getenv('ROUTING_PROMPT_PATH', '/app/config/routing-prompt.md')
@@ -154,21 +156,35 @@ def forward_request(target_url: str, path: str, data: Dict[Any, Any], route: str
         # Set up headers
         headers = {'Content-Type': 'application/json'}
 
-        # Add xAI API key if routing to xAI
+        # Override model to match the target backend
         if route == 'xai' and XAI_API_KEY:
             headers['Authorization'] = f'Bearer {XAI_API_KEY}'
-            # Override model for xAI
             data['model'] = XAI_MODEL
+        elif route == 'router':
+            data['model'] = ROUTER_MODEL
+        else:
+            data['model'] = PRIMARY_MODEL
+
+        is_stream = data.get('stream', False)
 
         # Forward the request
         response = requests.post(
             url,
             json=data,
             headers=headers,
+            stream=is_stream,
             timeout=300  # 5 minute timeout for long generations
         )
 
-        # Return response with same status code
+        if is_stream:
+            # Stream SSE chunks back to the client
+            return Response(
+                response.iter_content(chunk_size=None),
+                status=response.status_code,
+                content_type='text/event-stream'
+            )
+
+        # Return buffered response with same status code
         return Response(
             response.content,
             status=response.status_code,
