@@ -5,7 +5,7 @@ set -e
 
 echo "==================================="
 echo "AI Router Test Suite"
-echo "Four-Tier Routing + Enrichment"
+echo "Five-Route Routing Pipeline"
 echo "==================================="
 echo ""
 
@@ -270,8 +270,49 @@ fi
 
 echo ""
 
+# Test meta pipeline routing
+echo "9. Testing meta pipeline routing..."
+echo ""
+
+# Meta-prompts are single-message requests >300 chars with embedded conversation markers.
+# Build a payload that triggers the meta detection heuristics in determine_route().
+meta_data='{
+  "messages": [{"role": "user", "content": "### Task:\nGenerate three follow-up questions the user might ask based on this conversation.\n\n### Guidelines:\n- Questions should be concise\n- Questions should be diverse\n\n<chat_history>\nUSER: What is the capital of France?\nASSISTANT: The capital of France is Paris.\n</chat_history>\n\nProvide exactly three follow-up questions, one per line."}],
+  "max_tokens": 100,
+  "temperature": 0.7
+}'
+
+echo "Sending meta-prompt (embedded chat history with task markers)..."
+response=$(curl -s -X POST "$BASE_URL/v1/chat/completions" \
+    -H "Content-Type: application/json" \
+    -d "$meta_data")
+
+content=$(echo "$response" | jq -r '.choices[0].message.content // .choices[0].message.reasoning_content // empty')
+model=$(echo "$response" | jq -r '.model // empty')
+
+if [ -n "$content" ] && [ "$content" != "null" ]; then
+    echo -e "${GREEN}✓ Meta pipeline query successful${NC}"
+    PASS=$((PASS + 1))
+    echo "Response: $(echo "$content" | head -c 100)..."
+
+    # Meta routes to primary model (Nano 30B)
+    if [[ "$model" == *"Nemotron-3-Nano-30B"* ]]; then
+        echo -e "${GREEN}✓ Correctly routed through meta pipeline to primary model${NC}"
+        PASS=$((PASS + 1))
+    else
+        echo -e "${YELLOW}⚠ Routed to: $model (expected Nano 30B via meta pipeline)${NC}"
+        WARN=$((WARN + 1))
+    fi
+else
+    echo -e "${RED}✗ Meta pipeline query failed${NC}"
+    FAIL=$((FAIL + 1))
+    echo "Response: $response"
+fi
+
+echo ""
+
 # Test direct router access
-echo "9. Testing direct model access..."
+echo "10. Testing direct model access..."
 echo ""
 
 router_data='{
@@ -322,8 +363,18 @@ fi
 
 echo ""
 
+# Test additional endpoints
+echo "11. Testing additional endpoints..."
+echo ""
+
+test_endpoint "Root Endpoint" "$BASE_URL/"
+test_endpoint "Stats Endpoint" "$BASE_URL/stats"
+test_endpoint "Explicit Route API" "$BASE_URL/api/route" "POST" '{"route": "router", "data": {"messages": [{"role": "user", "content": "Hi"}], "max_tokens": 10}}'
+
+echo ""
+
 # Test Traefik dashboard
-echo "10. Testing Traefik dashboard..."
+echo "12. Testing Traefik dashboard..."
 echo ""
 
 if curl -s "http://localhost:8080/api/overview" | jq . > /dev/null 2>&1; then
@@ -359,6 +410,7 @@ echo "  • SIMPLE   → Mini 4B (router model)"
 echo "  • MODERATE → Nano 30B (primary model)"
 echo "  • COMPLEX  → xAI Grok (external API)"
 echo "  • ENRICH   → xAI context → Nano 30B (enrichment pipeline)"
+echo "  • META     → Nano 30B (meta pipeline, skips classification)"
 echo ""
 echo "Next steps:"
 echo "  • View logs: docker compose logs -f"

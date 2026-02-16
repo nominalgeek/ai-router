@@ -2,7 +2,7 @@
 
 ## System Overview
 
-Three-tier intelligent routing system that classifies queries by complexity and routes them to the optimal AI model, with an enrichment pipeline for real-time information.
+Five-route intelligent routing system that classifies queries by complexity and routes them to the optimal AI model, with an enrichment pipeline for real-time information and a meta pipeline for client-generated meta-prompts.
 
 ## Pipeline Diagram
 
@@ -16,6 +16,8 @@ flowchart TD
 
     subgraph Router Service["AI Router :8002 — Flask"]
         Parse[Parse JSON & Validate Messages]
+        MetaCheck{Meta-prompt?}
+        MetaInject[Prepend Meta System Prompt]
         Classify[Classify Query via Mini 4B]
         Decision{Route Decision}
         Enrich[Fetch Enrichment Context]
@@ -34,7 +36,10 @@ flowchart TD
 
     Client --> LB
     LB -->|"/v1/chat/completions"| Parse
-    Parse --> Classify
+    Parse --> MetaCheck
+    MetaCheck -->|"Yes — single msg >300 chars<br/>with embedded history markers"| MetaInject
+    MetaCheck -->|"No"| Classify
+    MetaInject --> Forward
     Classify -->|"POST /v1/chat/completions<br/>max_tokens=10, temp=0"| Mini
     Mini -->|"SIMPLE / MODERATE / COMPLEX / ENRICH"| Decision
 
@@ -51,6 +56,7 @@ flowchart TD
     Forward -->|"MODERATE"| Primary
     Forward -->|"COMPLEX"| XAI
     Forward -->|"ENRICH<br/>(enriched messages)"| Primary
+    Forward -->|"META"| Primary
 
     Mini --> Response
     Primary --> Response
@@ -62,6 +68,8 @@ flowchart TD
     style Primary fill:#4a6741,color:#fff
     style XAI fill:#6b4c8a,color:#fff
     style Decision fill:#b7791f,color:#fff
+    style MetaCheck fill:#b7791f,color:#fff
+    style MetaInject fill:#2b6cb0,color:#fff
     style Enrich fill:#6b4c8a,color:#fff
     style Inject fill:#6b4c8a,color:#fff
 ```
@@ -71,8 +79,8 @@ flowchart TD
 ```mermaid
 flowchart LR
     Query[User Query<br/><i>requires current info</i>]
-    XAI_Enrich["xAI API<br/><b>enrichment-system-prompt.md</b><br/>max_tokens=1024"]
-    Template["Wrap in<br/><b>enrichment-injection-prompt.md</b>"]
+    XAI_Enrich["xAI /v1/responses<br/><b>enrichment/system.md</b><br/>tools: web_search, x_search<br/>max_tokens=1024"]
+    Template["Wrap in<br/><b>enrichment/injection.md</b>"]
     Prepend["Prepend as<br/>system message"]
     Primary["Primary Model<br/>Nemotron Nano 30B"]
 
@@ -89,7 +97,7 @@ flowchart LR
 
 ```mermaid
 flowchart LR
-    subgraph Classification["routing-prompt.md"]
+    subgraph Classification["routing/request.md"]
         direction TB
         S["<b>SIMPLE</b><br/>Greetings, casual chat,<br/>basic factual questions"]
         M["<b>MODERATE</b><br/>Explanations, coding help,<br/>standard analysis"]
@@ -97,15 +105,22 @@ flowchart LR
         E["<b>ENRICH</b><br/>Current events, real-time data,<br/>post-training-cutoff info"]
     end
 
+    subgraph Heuristic["Detected before classification"]
+        META["<b>META</b><br/>Client meta-prompts<br/>(follow-ups, titles, summaries)"]
+    end
+
     S --> Mini["Mini 4B"]
     M --> Primary["Nano 30B"]
     C --> XAI["xAI Grok"]
     E --> Enrichment["Enrichment Pipeline<br/>then Nano 30B"]
+    META --> Primary
 
     style S fill:#38a169,color:#fff
     style M fill:#d69e2e,color:#fff
     style C fill:#e53e3e,color:#fff
     style E fill:#6b4c8a,color:#fff
+    style META fill:#2b6cb0,color:#fff
+    style Heuristic fill:#1a365d,color:#e2e8f0
 ```
 
 ## Deployment Topology
@@ -144,4 +159,6 @@ flowchart TD
 | `/v1/completions` | POST | Legacy completions passthrough |
 | `/v1/models` | GET | List models from all backends |
 | `/api/route` | POST | Explicit routing control for testing |
-| `/stats` | GET | Routing statistics |
+| `/stats` | GET | Routing statistics (placeholder) |
+| `/router/*` | * | Direct access to vLLM router (Mini 4B) — Traefik strip-prefix |
+| `/primary/*` | * | Direct access to vLLM primary (Nano 30B) — Traefik strip-prefix |

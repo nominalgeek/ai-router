@@ -1,4 +1,7 @@
-.PHONY: help up down restart logs health clean backup restore venv
+.PHONY: help up down restart logs logs-router logs-primary logs-ai \
+       status health models gpu stats clean clean-all backup restore \
+       venv test benchmark test-router test-primary pull update \
+       shell-router shell-primary shell-ai validate network volumes prune
 
 VENV_DIR := .venv
 PYTHON := $(VENV_DIR)/bin/python
@@ -90,7 +93,7 @@ backup: ## Backup Hugging Face cache
 	@mkdir -p backups
 	@echo "Creating backup..."
 	@docker run --rm \
-		-v ai-routing_hf-cache:/data \
+		-v ai-router_hf-cache:/data \
 		-v $(PWD)/backups:/backup \
 		ubuntu tar czf /backup/hf-cache-$$(date +%Y%m%d-%H%M%S).tar.gz /data
 	@echo "✓ Backup created in backups/"
@@ -98,7 +101,7 @@ backup: ## Backup Hugging Face cache
 restore: ## Restore from latest backup
 	@echo "Restoring from latest backup..."
 	@docker run --rm \
-		-v ai-routing_hf-cache:/data \
+		-v ai-router_hf-cache:/data \
 		-v $(PWD)/backups:/backup \
 		ubuntu bash -c "cd /data && tar xzf /backup/$$(ls -t /backup/*.tar.gz | head -1) --strip-components=1"
 	@echo "✓ Restored"
@@ -137,10 +140,10 @@ validate: ## Validate docker compose configuration
 	docker compose config
 
 network: ## Show network information
-	docker network inspect ai-routing_ai-network
+	docker network inspect ai-router_ai-network
 
 volumes: ## Show volume information
-	docker volume ls | grep ai-routing
+	docker volume ls | grep ai-router
 
 prune: ## Remove unused Docker resources
 	docker system prune -f
