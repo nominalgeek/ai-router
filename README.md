@@ -79,7 +79,13 @@ src/
   providers.py         # Routing logic, enrichment, request forwarding
   app.py               # Flask app and route handlers
 router.py              # Entrypoint (runs src.app)
-config/                # Prompt templates for classification and enrichment
+config/prompts/
+  routing/
+    system.md          # Classification system prompt
+    request.md         # Classification request template
+  enrichment/
+    system.md          # Enrichment system prompt (sent to xAI)
+    injection.md       # Enrichment context injection template (sent to primary)
 docker-compose.yml     # All services: traefik, ai-router, router model, primary model
 Makefile               # Common operations
 ```

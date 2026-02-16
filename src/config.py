@@ -24,10 +24,10 @@ PRIMARY_MODEL = os.getenv('PRIMARY_MODEL', 'unsloth/NVIDIA-Nemotron-3-Nano-30B-A
 XAI_SEARCH_TOOLS = os.getenv('XAI_SEARCH_TOOLS', 'web_search,x_search')
 
 # Prompt file paths
-ROUTING_PROMPT_PATH = os.getenv('ROUTING_PROMPT_PATH', '/app/config/routing-prompt.md')
-ROUTING_SYSTEM_PROMPT_PATH = os.getenv('ROUTING_SYSTEM_PROMPT_PATH', '/app/config/routing-system-prompt.md')
-ENRICHMENT_SYSTEM_PROMPT_PATH = os.getenv('ENRICHMENT_SYSTEM_PROMPT_PATH', '/app/config/enrichment-system-prompt.md')
-ENRICHMENT_INJECTION_PROMPT_PATH = os.getenv('ENRICHMENT_INJECTION_PROMPT_PATH', '/app/config/enrichment-injection-prompt.md')
+ROUTING_PROMPT_PATH = os.getenv('ROUTING_PROMPT_PATH', '/app/config/prompts/routing/request.md')
+ROUTING_SYSTEM_PROMPT_PATH = os.getenv('ROUTING_SYSTEM_PROMPT_PATH', '/app/config/prompts/routing/system.md')
+ENRICHMENT_SYSTEM_PROMPT_PATH = os.getenv('ENRICHMENT_SYSTEM_PROMPT_PATH', '/app/config/prompts/enrichment/system.md')
+ENRICHMENT_INJECTION_PROMPT_PATH = os.getenv('ENRICHMENT_INJECTION_PROMPT_PATH', '/app/config/prompts/enrichment/injection.md')
 
 
 def load_prompt_file(path, fallback, label):
