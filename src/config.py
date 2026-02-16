@@ -38,6 +38,7 @@ ROUTING_PROMPT_PATH = os.getenv('ROUTING_PROMPT_PATH', '/app/config/prompts/rout
 ROUTING_SYSTEM_PROMPT_PATH = os.getenv('ROUTING_SYSTEM_PROMPT_PATH', '/app/config/prompts/routing/system.md')
 ENRICHMENT_SYSTEM_PROMPT_PATH = os.getenv('ENRICHMENT_SYSTEM_PROMPT_PATH', '/app/config/prompts/enrichment/system.md')
 ENRICHMENT_INJECTION_PROMPT_PATH = os.getenv('ENRICHMENT_INJECTION_PROMPT_PATH', '/app/config/prompts/enrichment/injection.md')
+META_SYSTEM_PROMPT_PATH = os.getenv('META_SYSTEM_PROMPT_PATH', '/app/config/prompts/meta/system.md')
 
 
 def load_prompt_file(path, fallback, label):
@@ -76,4 +77,10 @@ ENRICHMENT_INJECTION_PROMPT = load_prompt_file(
     ENRICHMENT_INJECTION_PROMPT_PATH,
     'The following is supplementary real-time context retrieved from an external source:\n\n---\n{context}\n---',
     'enrichment injection prompt'
+)
+
+META_SYSTEM_PROMPT = load_prompt_file(
+    META_SYSTEM_PROMPT_PATH,
+    'You are processing a structured task about a prior conversation. Follow the task instructions exactly. Be concise.',
+    'meta system prompt'
 )

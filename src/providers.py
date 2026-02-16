@@ -40,16 +40,41 @@ def determine_route(messages: list, session: SessionLogger = None) -> str:
     # Fast-path: single-message requests that embed their own conversation
     # history are client-generated meta-prompts (follow-up suggestions,
     # title generation, summaries, etc.). They're self-contained and don't
-    # need classification or enrichment — route to primary for quality.
+    # need classification or enrichment — route to meta pipeline.
     if len(messages) == 1 and len(last_message) > 300:
         user_msgs = [m for m in messages if m.get('role') == 'user']
         if len(user_msgs) == 1 and any(marker in last_message for marker in (
             'USER:', 'ASSISTANT:', '<chat_history>', '### Task:', '### Guidelines:'
         )):
-            logger.info("Detected embedded-history meta-prompt, routing to primary (fast-path)")
+            # Guard rail: truncate embedded chat history if it would blow
+            # the primary model's context (~32K tokens ≈ ~120K chars).
+            # Leave ~4K tokens of headroom for system prompt + generation.
+            max_chars = 112000  # ~28K tokens
+            if len(last_message) > max_chars:
+                logger.warning(f"Meta-prompt too long ({len(last_message)} chars), truncating")
+                # Try to truncate within <chat_history> tags, keeping recent messages
+                start = last_message.find('<chat_history>')
+                end = last_message.find('</chat_history>')
+                if start >= 0 and end > start:
+                    prefix = last_message[:start + len('<chat_history>\n')]
+                    suffix = last_message[end:]
+                    history = last_message[start + len('<chat_history>\n'):end]
+                    # Keep the tail of the history (most recent exchanges)
+                    budget = max_chars - len(prefix) - len(suffix)
+                    history = history[-budget:]
+                    # Snap to the next complete line to avoid mid-message cuts
+                    nl = history.find('\n')
+                    if nl >= 0:
+                        history = history[nl + 1:]
+                    messages[-1]['content'] = prefix + history + suffix
+                else:
+                    # No tags found — just truncate from the front
+                    messages[-1]['content'] = last_message[-max_chars:]
+
+            logger.info("Detected meta-prompt, routing to meta pipeline")
             if session:
-                session.set_route('primary', 'META', 0)
-            return 'primary'
+                session.set_route('meta', 'META', 0)
+            return 'meta'
 
     # Build a short conversation context for follow-up queries so the
     # classifier can resolve references like "that school" or "it".

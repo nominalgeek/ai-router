@@ -9,6 +9,7 @@ from src.config import (
     XAI_API_KEY, XAI_API_URL, XAI_MODEL,
     ROUTER_MODEL, PRIMARY_MODEL,
     ENRICHMENT_INJECTION_PROMPT,
+    META_SYSTEM_PROMPT,
 )
 from src.session_logger import SessionLogger
 from src.providers import (
@@ -107,6 +108,16 @@ def chat_completions():
                 logger.warning("Enrichment context unavailable, forwarding to primary model without context")
 
             data['_route'] = 'enrich'
+            result = forward_request(PRIMARY_URL, '/v1/chat/completions', data, 'primary', session=session)
+            session.save()
+            return result
+
+        # Meta pipeline: client-generated meta-prompts (follow-up suggestions,
+        # title generation, summaries). Self-contained, no enrichment needed.
+        if route == 'meta':
+            logger.info("Entering meta pipeline")
+            data['messages'].insert(0, {"role": "system", "content": META_SYSTEM_PROMPT})
+            data['_route'] = 'meta'
             result = forward_request(PRIMARY_URL, '/v1/chat/completions', data, 'primary', session=session)
             session.save()
             return result
