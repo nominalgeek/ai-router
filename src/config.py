@@ -32,7 +32,7 @@ XAI_SEARCH_TOOLS = os.getenv('XAI_SEARCH_TOOLS', 'web_search,x_search')
 # How many characters of prior conversation the classifier sees when resolving
 # references in follow-up queries. Higher = better context resolution but uses
 # more of the router model's context window. ~4 chars ≈ 1 token.
-CLASSIFY_CONTEXT_BUDGET = int(os.getenv('CLASSIFY_CONTEXT_BUDGET', '4000'))
+CLASSIFY_CONTEXT_BUDGET = int(os.getenv('CLASSIFY_CONTEXT_BUDGET', '2000'))
 
 # Max tokens the classifier can generate per request.  Must be large enough for
 # the router model's chain-of-thought (e.g. <think> block) plus the final
