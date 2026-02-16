@@ -25,6 +25,11 @@ PRIMARY_MODEL = os.getenv('PRIMARY_MODEL', 'unsloth/NVIDIA-Nemotron-3-Nano-30B-A
 # xAI search tools for enrichment (comma-separated: "web_search,x_search" or "" to disable)
 XAI_SEARCH_TOOLS = os.getenv('XAI_SEARCH_TOOLS', 'web_search,x_search')
 
+# How many characters of prior conversation the classifier sees when resolving
+# references in follow-up queries. Higher = better context resolution but uses
+# more of the router model's context window. ~4 chars ≈ 1 token.
+CLASSIFY_CONTEXT_BUDGET = int(os.getenv('CLASSIFY_CONTEXT_BUDGET', '4000'))
+
 # Timezone configuration (defaults to US Pacific / Happy Valley, OR)
 LOCAL_TZ = ZoneInfo(os.getenv('TZ', 'America/Los_Angeles'))
 

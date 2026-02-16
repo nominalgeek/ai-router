@@ -27,8 +27,8 @@ flowchart TD
 
     subgraph Backends
         direction TB
-        Mini["<b>Router Model</b><br/>Nemotron Mini 4B<br/>vllm-router :8001<br/><i>8G VRAM</i>"]
-        Primary["<b>Primary Model</b><br/>Nemotron Nano 30B<br/>vllm-primary :8000<br/><i>24G VRAM</i>"]
+        Mini["<b>Router Model</b><br/>Nemotron Mini 4B<br/>vllm-router :8001<br/><i>~10 GB VRAM (10%)</i>"]
+        Primary["<b>Primary Model</b><br/>Nemotron Nano 30B<br/>vllm-primary :8000<br/><i>~77 GB VRAM (80%)</i>"]
         XAI["<b>xAI API</b><br/>grok-4-1-fast-reasoning<br/>api.x.ai<br/><i>External</i>"]
     end
 

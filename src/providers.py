@@ -15,6 +15,7 @@ from src.config import (
     ROUTING_SYSTEM_PROMPT, ROUTING_PROMPT,
     ENRICHMENT_SYSTEM_PROMPT,
     XAI_SEARCH_TOOLS,
+    CLASSIFY_CONTEXT_BUDGET,
 )
 from src.session_logger import SessionLogger
 
@@ -86,7 +87,7 @@ def determine_route(messages: list, session: SessionLogger = None) -> str:
         # recent turns until we hit a budget (~2000 chars ≈ 500 tokens).
         # This keeps the classifier prompt safe for the 4B model while
         # giving it enough context to resolve references.
-        budget = 2000
+        budget = CLASSIFY_CONTEXT_BUDGET
         lines = []
         for m in reversed(prior):
             role = m.get('role', 'unknown')

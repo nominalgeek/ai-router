@@ -78,8 +78,9 @@ services:
     command: >
       --model nvidia/Nemotron-Mini-4B-Instruct
       --dtype bfloat16
+      --quantization fp8
       --kv-cache-dtype auto
-      --gpu-memory-utilization 0.2
+      --gpu-memory-utilization 0.1
       --max-model-len 4096
       --port 8001
       --enforce-eager
@@ -127,7 +128,7 @@ services:
       --model unsloth/NVIDIA-Nemotron-3-Nano-30B-A3B-NVFP4
       --dtype bfloat16
       --kv-cache-dtype fp8
-      --gpu-memory-utilization 0.7
+      --gpu-memory-utilization 0.8
       --max-model-len 32768
       --port 8000
       --enforce-eager

@@ -45,10 +45,10 @@ Both vLLM containers share GPU 0. The split is configured in `docker-compose.yml
 
 | Container | Model | VRAM budget | Context length |
 |-----------|-------|-------------|----------------|
-| `vllm-router` | Nemotron Mini 4B (bfloat16) | ~20% (~19 GB) | 4,096 tokens |
-| `vllm-primary` | Nemotron Nano 30B (fp8 KV cache) | ~70% (~67 GB) | 32,768 tokens |
+| `vllm-router` | Nemotron Mini 4B (fp8, on-the-fly) | ~10% (~10 GB) | 4,096 tokens |
+| `vllm-primary` | Nemotron Nano 30B (fp8 KV cache) | ~80% (~77 GB) | 32,768 tokens |
 
-~10% VRAM remains unallocated as headroom. This is a tight fit — changes to model sizes, quantization, or context lengths need to account for the shared GPU budget.
+~10% VRAM remains unallocated as headroom. The router model weights are ~4 GB after fp8 quantization (on-the-fly via `--quantization fp8`), leaving ample KV cache within its 10% budget. The bulk of the GPU budget goes to the primary model's KV cache for long-context requests.
 
 **Models:**
 
