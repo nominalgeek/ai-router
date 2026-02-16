@@ -95,6 +95,8 @@ docs/
 agents/
   session-review/
     AGENT.md                    # Task spec for autonomous session-review agent
+  doc-review/
+    AGENT.md                    # Task spec for documentation-review agent
 Benchmark                       # Bash script — latency, throughput, concurrency benchmarks
 Test                            # Bash script — integration test suite (health, routing, endpoints)
 logs/sessions/                  # Auto-generated per-request JSON session logs

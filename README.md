@@ -121,6 +121,8 @@ docs/
 agents/
   session-review/
     AGENT.md                    # Task spec for autonomous session-review agent
+  doc-review/
+    AGENT.md                    # Task spec for documentation-review agent
 Test                            # Integration test suite (bash)
 Benchmark                       # Latency, throughput, concurrency benchmarks (bash)
 logs/sessions/                  # Auto-generated per-request JSON session logs
@@ -198,5 +200,6 @@ Run `make help` to see all available targets. Key ones:
 | `make test` | Run integration test suite |
 | `make benchmark` | Run latency/throughput/concurrency benchmarks |
 | `make review` | Run session-review agent on accumulated logs |
+| `make doc-review` | Run doc-review agent to check docs against code |
 | `make gpu` | Show GPU status |
 | `make clean-all` | Remove everything including model cache volumes |
