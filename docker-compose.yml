@@ -41,6 +41,7 @@ services:
     working_dir: /app
     environment:
       - HOME=/tmp
+      - TZ=${TZ:-America/Los_Angeles}
       - XAI_API_KEY=${XAI_API_KEY}
       - XAI_SEARCH_TOOLS=${XAI_SEARCH_TOOLS:-web_search,x_search}
       - ROUTER_URL=http://router:8001

@@ -1,14 +1,14 @@
 """Routing logic and request forwarding to model providers."""
 
 import json
+import re
 import time
-from datetime import datetime
 from flask import jsonify, Response
 import requests
 from typing import Dict, Any, Optional
 
 from src.config import (
-    logger,
+    logger, now,
     ROUTER_URL, PRIMARY_URL,
     XAI_API_KEY, XAI_API_URL, XAI_MODEL,
     ROUTER_MODEL, PRIMARY_MODEL,
@@ -37,11 +37,60 @@ def determine_route(messages: list, session: SessionLogger = None) -> str:
     # Get the last user message
     last_message = messages[-1].get('content', '')
 
+    # Fast-path: single-message requests that embed their own conversation
+    # history are client-generated meta-prompts (follow-up suggestions,
+    # title generation, summaries, etc.). They're self-contained and don't
+    # need classification or enrichment — route to primary for quality.
+    if len(messages) == 1 and len(last_message) > 300:
+        user_msgs = [m for m in messages if m.get('role') == 'user']
+        if len(user_msgs) == 1 and any(marker in last_message for marker in (
+            'USER:', 'ASSISTANT:', '<chat_history>', '### Task:', '### Guidelines:'
+        )):
+            logger.info("Detected embedded-history meta-prompt, routing to primary (fast-path)")
+            if session:
+                session.set_route('primary', 'META', 0)
+            return 'primary'
+
+    # Build a short conversation context for follow-up queries so the
+    # classifier can resolve references like "that school" or "it".
+    # Keep it brief for the Mini 4B context window.
+    context_prefix = ''
+    prior = messages[:-1]
+    if prior:
+        # Walk backwards through prior messages, collecting the most
+        # recent turns until we hit a budget (~2000 chars ≈ 500 tokens).
+        # This keeps the classifier prompt safe for the 4B model while
+        # giving it enough context to resolve references.
+        budget = 2000
+        lines = []
+        for m in reversed(prior):
+            role = m.get('role', 'unknown')
+            content = m.get('content', '')
+            # Strip <details> reasoning tags so the classifier sees
+            # the actual answer, not internal chain-of-thought
+            content = re.sub(r'<details[^>]*>.*?</details>\s*', '', content, flags=re.DOTALL)
+            content = content.strip()
+            line = f"{role}: {content}"
+            if len(line) > budget:
+                # Fit what we can from this message, then stop
+                lines.append(line[:budget] + '...')
+                break
+            lines.append(line)
+            budget -= len(line)
+            if budget <= 0:
+                break
+        lines.reverse()
+        context_prefix = (
+            "Recent conversation context (for resolving references):\n"
+            + "\n".join(lines)
+            + "\n\n"
+        )
+
     # Build routing classification prompt from external template
-    routing_prompt = ROUTING_PROMPT.format(query=last_message)
+    routing_prompt = context_prefix + ROUTING_PROMPT.format(query=last_message)
 
     classify_messages = [
-        {"role": "system", "content": f"Today's date is {datetime.now().strftime('%B %d, %Y')}.\n\n{ROUTING_SYSTEM_PROMPT}"},
+        {"role": "system", "content": f"Today's date is {now().strftime('%B %d, %Y')}.\n\n{ROUTING_SYSTEM_PROMPT}"},
         {"role": "user", "content": routing_prompt}
     ]
     classify_params = {"max_tokens": 10, "temperature": 0.0}
@@ -127,13 +176,17 @@ def fetch_enrichment_context(messages: list, session: SessionLogger = None) -> O
     Uses web_search and x_search tools when configured via XAI_SEARCH_TOOLS.
     Returns the enrichment text, or None if the call fails.
     """
-    last_message = messages[-1].get('content', '') if messages else ''
+    current_date = now().strftime('%B %d, %Y')
 
-    current_date = datetime.now().strftime('%B %d, %Y')
+    # Pass full conversation history so Grok can resolve references
+    # (e.g. "that school") via the prior turns.
     enrich_input = [
         {"role": "system", "content": f"Today's date is {current_date}.\n\n{ENRICHMENT_SYSTEM_PROMPT}"},
-        {"role": "user", "content": last_message}
     ]
+    for m in messages:
+        role = m.get('role', 'user')
+        if role in ('user', 'assistant'):
+            enrich_input.append({"role": role, "content": m.get('content', '')})
 
     tools = _build_search_tools()
     enrich_url = f"{XAI_API_URL}/v1/responses"
@@ -226,7 +279,7 @@ def forward_request(target_url: str, path: str, data: Dict[Any, Any], route: str
 
         # Inject current date into the first system message, or prepend one
         if 'messages' in data:
-            current_date = datetime.now().strftime('%B %d, %Y')
+            current_date = now().strftime('%B %d, %Y')
             date_line = f"Today's date is {current_date}."
             first_system = next((m for m in data['messages'] if m.get('role') == 'system'), None)
             if first_system:

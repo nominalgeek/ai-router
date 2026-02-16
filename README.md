@@ -34,6 +34,7 @@ A small classifier model (Nemotron Mini 4B) evaluates each request and routes it
    HF_TOKEN=<your-huggingface-token>
    XAI_API_KEY=<your-xai-api-key>           # optional
    XAI_SEARCH_TOOLS=web_search,x_search     # optional, see below
+   TZ=America/Los_Angeles                   # timezone, defaults to US Pacific
    ```
 
 2. **Start services**
@@ -116,7 +117,17 @@ cat logs/sessions/<filename>.json | python -m json.tool
 grep -l '"route": "xai"' logs/sessions/*.json
 ```
 
-Logs auto-rotate: files older than 7 days or exceeding 5000 total are cleaned up automatically.
+Logs auto-rotate: files older than 7 days or exceeding 5000 total are cleaned up automatically. Timestamps use the configured `TZ` timezone (default: `America/Los_Angeles`).
+
+## Timezone
+
+All timestamps (session logs, date injection into prompts) use the `TZ` environment variable. Defaults to `America/Los_Angeles` (US Pacific). Set in `.env`:
+
+```
+TZ=America/Los_Angeles
+```
+
+Uses standard [IANA timezone names](https://en.wikipedia.org/wiki/List_of_tz_database_time_zones).
 
 ## Enrichment Search Tools
 

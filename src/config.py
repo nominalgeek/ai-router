@@ -2,6 +2,8 @@
 
 import os
 import logging
+from datetime import datetime
+from zoneinfo import ZoneInfo
 
 # Configure logging
 logging.basicConfig(
@@ -22,6 +24,14 @@ PRIMARY_MODEL = os.getenv('PRIMARY_MODEL', 'unsloth/NVIDIA-Nemotron-3-Nano-30B-A
 
 # xAI search tools for enrichment (comma-separated: "web_search,x_search" or "" to disable)
 XAI_SEARCH_TOOLS = os.getenv('XAI_SEARCH_TOOLS', 'web_search,x_search')
+
+# Timezone configuration (defaults to US Pacific / Happy Valley, OR)
+LOCAL_TZ = ZoneInfo(os.getenv('TZ', 'America/Los_Angeles'))
+
+
+def now():
+    """Return the current timezone-aware datetime."""
+    return datetime.now(LOCAL_TZ)
 
 # Prompt file paths
 ROUTING_PROMPT_PATH = os.getenv('ROUTING_PROMPT_PATH', '/app/config/prompts/routing/request.md')

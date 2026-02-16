@@ -6,9 +6,8 @@ import json
 import uuid
 import time
 import glob as globmod
-from datetime import datetime
 
-from src.config import logger
+from src.config import logger, now
 
 # Session logging configuration
 LOG_DIR = os.getenv('LOG_DIR', '/var/log/ai-router/sessions')
@@ -23,7 +22,7 @@ class SessionLogger:
     def __init__(self):
         self.id = uuid.uuid4().hex[:8]
         self.start_time = time.time()
-        self.timestamp = datetime.now()
+        self.timestamp = now()
         self.data = {
             'id': self.id,
             'timestamp': self.timestamp.isoformat(timespec='milliseconds'),
