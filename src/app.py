@@ -80,7 +80,7 @@ def chat_completions():
 
         session.set_query(data['messages'])
 
-        # Determine routing using Mini 4B classification
+        # Determine routing using Orchestrator 8B classification
         route = determine_route(data['messages'], session=session)
 
         # Enrichment pipeline: fetch context from xAI, then forward to primary
@@ -207,10 +207,10 @@ def api_route():
                 route = determine_route(data['messages'])
             else:
                 route = 'primary'
-        elif route not in ['router', 'primary', 'xai', 'enrich']:
+        elif route not in ['primary', 'xai', 'enrich']:
             return jsonify({
                 'error': 'Invalid route',
-                'message': 'Route must be "router", "primary", "xai", "enrich", or "auto"'
+                'message': 'Route must be "primary", "xai", "enrich", or "auto"'
             }), 400
 
         target_url = get_model_url(route)
@@ -233,8 +233,8 @@ def stats():
     return jsonify({
         'message': 'Statistics endpoint - not yet implemented',
         'routes': {
-            'router': 'Fast model for simple queries',
-            'primary': 'Powerful model for complex reasoning'
+            'primary': 'Local model for simple and moderate queries',
+            'xai': 'Cloud model for complex queries and enrichment'
         }
     })
 

@@ -19,7 +19,7 @@ XAI_API_KEY = os.getenv('XAI_API_KEY', '')
 XAI_API_URL = 'https://api.x.ai'  # Base URL without /v1
 # Available models: grok-4-1-fast-non-reasoning, grok-4-1-fast-reasoning, grok-code-fast-1
 XAI_MODEL = os.getenv('XAI_MODEL', 'grok-4-1-fast-reasoning')
-ROUTER_MODEL = os.getenv('ROUTER_MODEL', 'nvidia/Nemotron-Mini-4B-Instruct')
+ROUTER_MODEL = os.getenv('ROUTER_MODEL', 'cyankiwi/Nemotron-Orchestrator-8B-AWQ-4bit')
 PRIMARY_MODEL = os.getenv('PRIMARY_MODEL', 'unsloth/NVIDIA-Nemotron-3-Nano-30B-A3B-NVFP4')
 
 # Virtual model name presented to external consumers (e.g. Open WebUI).
@@ -33,6 +33,11 @@ XAI_SEARCH_TOOLS = os.getenv('XAI_SEARCH_TOOLS', 'web_search,x_search')
 # references in follow-up queries. Higher = better context resolution but uses
 # more of the router model's context window. ~4 chars ≈ 1 token.
 CLASSIFY_CONTEXT_BUDGET = int(os.getenv('CLASSIFY_CONTEXT_BUDGET', '4000'))
+
+# Max tokens the classifier can generate per request.  Must be large enough for
+# the router model's chain-of-thought (e.g. <think> block) plus the final
+# classification word.  Increase if swapping to a more verbose reasoning model.
+CLASSIFY_MAX_TOKENS = int(os.getenv('CLASSIFY_MAX_TOKENS', '512'))
 
 # Timezone configuration (defaults to US Pacific / Happy Valley, OR)
 LOCAL_TZ = ZoneInfo(os.getenv('TZ', 'America/Los_Angeles'))

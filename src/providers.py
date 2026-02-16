@@ -16,21 +16,22 @@ from src.config import (
     ENRICHMENT_SYSTEM_PROMPT,
     XAI_SEARCH_TOOLS,
     CLASSIFY_CONTEXT_BUDGET,
+    CLASSIFY_MAX_TOKENS,
 )
 from src.session_logger import SessionLogger
 
 
 def determine_route(messages: list, session: SessionLogger = None) -> str:
     """
-    Use Mini 4B to determine routing via prompt-based classification.
-    Routes to: 'router' (Mini 4B), 'primary' (local Nano 30B), or 'xai' (xAI API).
+    Use Orchestrator 8B to determine routing via prompt-based classification.
+    Routes to: 'primary' (local Nano 30B), 'xai' (xAI API), or 'enrich' (xAI context → primary).
 
     Args:
         messages: List of message dictionaries
         session: Optional SessionLogger for request tracking
 
     Returns:
-        'router', 'primary', 'xai', or 'enrich'
+        'primary', 'xai', or 'enrich'
     """
     if not messages:
         return 'primary'
@@ -79,7 +80,7 @@ def determine_route(messages: list, session: SessionLogger = None) -> str:
 
     # Build a short conversation context for follow-up queries so the
     # classifier can resolve references like "that school" or "it".
-    # Keep it brief for the Mini 4B context window.
+    # Keep it brief for the Orchestrator 8B context window.
     context_prefix = ''
     prior = messages[:-1]
     if prior:
@@ -119,7 +120,7 @@ def determine_route(messages: list, session: SessionLogger = None) -> str:
         {"role": "system", "content": f"{date_context()}\n\n{ROUTING_SYSTEM_PROMPT}"},
         {"role": "user", "content": routing_prompt}
     ]
-    classify_params = {"max_tokens": 10, "temperature": 0.0}
+    classify_params = {"max_tokens": CLASSIFY_MAX_TOKENS, "temperature": 0.0}
     classify_url = f"{ROUTER_URL}/v1/chat/completions"
 
     if session:
@@ -128,7 +129,7 @@ def determine_route(messages: list, session: SessionLogger = None) -> str:
 
     classify_start = time.time()
     try:
-        # Ask Mini 4B router to classify the query
+        # Ask Orchestrator 8B router to classify the query
         response = requests.post(
             classify_url,
             json={
@@ -148,17 +149,24 @@ def determine_route(messages: list, session: SessionLogger = None) -> str:
             return 'primary'
 
         result = response.json()
-        # Extract decision from response (handle both content and reasoning_content)
+        # Extract decision from response (handle both content and reasoning_content).
+        # The Orchestrator 8B wraps its reasoning in <think>...</think> tags.
+        # Strip closed blocks first, then any unclosed trailing block (the
+        # model ran out of tokens mid-reasoning).  What remains should be
+        # just the classification word.
         message = result['choices'][0]['message']
-        decision = (message.get('content') or message.get('reasoning_content') or '').strip().upper()
+        raw = (message.get('content') or message.get('reasoning_content') or '').strip()
+        decision = re.sub(r'<think>.*?</think>', '', raw, flags=re.DOTALL | re.IGNORECASE)
+        decision = re.sub(r'<think>.*', '', decision, flags=re.DOTALL | re.IGNORECASE)
+        decision = decision.strip().upper()
 
         route = 'primary'  # default
         if 'ENRICH' in decision:
             logger.info("Routing to enrichment pipeline: prompt-based classification (ENRICH)")
             route = 'enrich'
         elif 'SIMPLE' in decision:
-            logger.info("Routing to router model: prompt-based classification (SIMPLE)")
-            route = 'router'
+            logger.info("Routing to primary model: prompt-based classification (SIMPLE)")
+            route = 'primary'
         elif 'MODERATE' in decision:
             logger.info("Routing to primary model: prompt-based classification (MODERATE)")
             route = 'primary'
@@ -169,7 +177,7 @@ def determine_route(messages: list, session: SessionLogger = None) -> str:
             logger.warning(f"Routing classification unclear: '{decision}', defaulting to primary")
 
         if session:
-            session.end_step(status=response.status_code, response_content=decision)
+            session.end_step(status=response.status_code, response_content=raw)
             session.set_route(route, decision, classify_ms)
         return route
 
@@ -275,9 +283,7 @@ def fetch_enrichment_context(messages: list, session: SessionLogger = None) -> O
 
 def get_model_url(route: str) -> str:
     """Get the appropriate model URL based on route."""
-    if route == 'router':
-        return ROUTER_URL
-    elif route == 'xai':
+    if route == 'xai':
         return XAI_API_URL
     else:
         return PRIMARY_URL
@@ -291,7 +297,7 @@ def forward_request(target_url: str, path: str, data: Dict[Any, Any], route: str
         target_url: Base URL of target model
         path: API path (e.g., '/v1/chat/completions')
         data: Request payload
-        route: Route type ('router', 'primary', 'xai')
+        route: Route type ('primary', 'xai')
         session: Optional SessionLogger for request tracking
 
     Returns:
@@ -317,8 +323,6 @@ def forward_request(target_url: str, path: str, data: Dict[Any, Any], route: str
         if route == 'xai' and XAI_API_KEY:
             headers['Authorization'] = f'Bearer {XAI_API_KEY}'
             data['model'] = XAI_MODEL
-        elif route == 'router':
-            data['model'] = ROUTER_MODEL
         else:
             data['model'] = PRIMARY_MODEL
 

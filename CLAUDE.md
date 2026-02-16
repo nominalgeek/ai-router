@@ -12,11 +12,11 @@ Personal homelab proof-of-concept with two goals:
 
 Exposes an OpenAI-compatible API so any client that speaks the OpenAI format can use it transparently.
 
-A small classifier model (Nemotron Mini 4B) evaluates each request and assigns one of five routes:
+A classifier model (Nemotron Orchestrator 8B AWQ) evaluates each request and assigns one of five routes:
 
 | Route | Backend | When |
 |-------|---------|------|
-| SIMPLE → `router` | Nemotron Mini 4B (local) | Greetings, trivial questions |
+| SIMPLE → `primary` | Nemotron Nano 30B (local) | Greetings, trivial questions |
 | MODERATE → `primary` | Nemotron Nano 30B (local) | Coding, analysis, explanations |
 | COMPLEX → `xai` | Grok (xAI API) | Research-level, novel problems |
 | ENRICH → `xai` + `primary` | Grok → Nano 30B | Queries needing real-time/web data |
@@ -45,16 +45,16 @@ Both vLLM containers share GPU 0. The split is configured in `docker-compose.yml
 
 | Container | Model | VRAM budget | Context length |
 |-----------|-------|-------------|----------------|
-| `vllm-router` | Nemotron Mini 4B (fp8, on-the-fly) | ~10% (~10 GB) | 4,096 tokens |
+| `vllm-router` | Nemotron Orchestrator 8B (AWQ 4-bit) | ~14% (~13 GB) | 4,096 tokens |
 | `vllm-primary` | Nemotron Nano 30B (fp8 KV cache) | ~80% (~77 GB) | 32,768 tokens |
 
-~10% VRAM remains unallocated as headroom. The router model weights are ~4 GB after fp8 quantization (on-the-fly via `--quantization fp8`), leaving ample KV cache within its 10% budget. The bulk of the GPU budget goes to the primary model's KV cache for long-context requests.
+~6% VRAM remains unallocated as headroom. The router model weights are ~6 GB after AWQ 4-bit quantization, leaving sufficient KV cache within its 14% budget. The bulk of the GPU budget goes to the primary model's KV cache for long-context requests.
 
 **Models:**
 
 | Role | Source | Notes |
 |------|--------|-------|
-| Router / classifier | [nvidia/Nemotron-Mini-4B-Instruct](https://huggingface.co/nvidia/Nemotron-Mini-4B-Instruct) | Also handles SIMPLE queries directly |
+| Router / classifier | [cyankiwi/Nemotron-Orchestrator-8B-AWQ-4bit](https://huggingface.co/cyankiwi/Nemotron-Orchestrator-8B-AWQ-4bit) | Classification only — purpose-built for routing |
 | Primary | [unsloth/NVIDIA-Nemotron-3-Nano-30B-A3B-NVFP4](https://huggingface.co/unsloth/NVIDIA-Nemotron-3-Nano-30B-A3B-NVFP4) | NVFP4 quantization by Unsloth |
 | Cloud (xAI) | `grok-4-1-fast-reasoning` (default) | Configurable via `XAI_MODEL` env var |
 
@@ -76,7 +76,7 @@ src/
   session_logger.py             # Per-request JSON session logs
 config/prompts/
   routing/
-    system.md                   # Classification system prompt for Mini 4B
+    system.md                   # Classification system prompt for Orchestrator 8B
     request.md                  # Classification request template
   enrichment/
     system.md                   # Enrichment system prompt (sent to xAI)
@@ -108,6 +108,7 @@ This is an exploratory project — architecture decisions are working hypotheses
 **Current decisions:**
 
 - **Single Flask process, synchronous.** All routing, enrichment, and forwarding happen in the request thread. Simple to follow and debug. Adequate for single-user homelab load.
+- **Router model is classifier-only.** The Orchestrator 8B model only classifies queries — it never generates responses. Both SIMPLE and MODERATE queries route to the primary model. This decouples classification quality from generation quality and enables swapping to purpose-built routing models without affecting response quality.
 - **Classification via prompt, not code.** Routing decisions come from the classifier model responding to a prompt template, not from hardcoded rules. This makes the routing behavior tunable by editing markdown files, but means classification quality depends on the small model's judgment.
 - **Enrichment is a two-hop pipeline.** ENRICH queries hit xAI first (for real-time context), then inject that context into the request before forwarding to the primary model. The boundary between "fetch context" and "generate response" is explicit — two separate API calls with the handoff visible in session logs.
 - **Session logs as the observability layer.** Every routed request writes a full-lifecycle JSON file. This is the primary way to understand what the system did and why. No metrics, no dashboards — just inspectable files.
@@ -152,7 +153,7 @@ Each session file contains:
 | Field | What it tells you |
 |-------|-------------------|
 | `user_query` | The original user message (truncated to 500 chars) |
-| `route` | Which route was chosen (`router`, `primary`, `xai`, `enrich`, `meta`) |
+| `route` | Which route was chosen (`primary`, `xai`, `enrich`, `meta`) |
 | `classification_raw` | The raw classifier output (e.g., `"SIMPLE"`) |
 | `classification_ms` | How long classification took |
 | `steps[]` | Ordered list of API calls made — each with `provider`, `url`, `model`, `messages_sent`, `response_content`, `duration_ms`, `status` |
@@ -161,7 +162,7 @@ Each session file contains:
 
 **What to look for when evaluating quality:**
 
-- **Misclassifications**: A `SIMPLE` query that got a poor answer (should have been `MODERATE`), or a `MODERATE` query that went to xAI unnecessarily (wasted cloud call)
+- **Misclassifications**: A `MODERATE` query that went to xAI unnecessarily (wasted cloud call), or a `COMPLEX` query that stayed local (poor answer quality)
 - **Enrichment failures**: `enrich` route where the xAI context step returned empty or irrelevant content
 - **Latency outliers**: `classification_ms` or step `duration_ms` values that seem abnormally high
 - **Meta pipeline issues**: Truncation warnings in logs, or meta-prompts that weren't detected and went through classification instead

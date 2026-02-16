@@ -18,7 +18,7 @@ flowchart TD
         Parse[Parse JSON & Validate Messages]
         MetaCheck{Meta-prompt?}
         MetaInject[Prepend Meta System Prompt]
-        Classify[Classify Query via Mini 4B]
+        Classify[Classify Query via Orchestrator 8B]
         Decision{Route Decision}
         Enrich[Fetch Enrichment Context]
         Inject[Inject Context as System Message]
@@ -27,7 +27,7 @@ flowchart TD
 
     subgraph Backends
         direction TB
-        Mini["<b>Router Model</b><br/>Nemotron Mini 4B<br/>vllm-router :8001<br/><i>~10 GB VRAM (10%)</i>"]
+        Mini["<b>Router Model</b><br/>Nemotron Orchestrator 8B AWQ<br/>vllm-router :8001<br/><i>~13 GB VRAM (14%)</i>"]
         Primary["<b>Primary Model</b><br/>Nemotron Nano 30B<br/>vllm-primary :8000<br/><i>~77 GB VRAM (80%)</i>"]
         XAI["<b>xAI API</b><br/>grok-4-1-fast-reasoning<br/>api.x.ai<br/><i>External</i>"]
     end
@@ -41,7 +41,7 @@ flowchart TD
     MetaCheck -->|"No"| Classify
     MetaInject --> Forward
     Classify -->|"POST /v1/chat/completions<br/>max_tokens=10, temp=0"| Mini
-    Mini -->|"SIMPLE / MODERATE / COMPLEX / ENRICH"| Decision
+    Mini -->|"SIMPLE / MODERATE /<br/>COMPLEX / ENRICH"| Decision
 
     Decision -->|"SIMPLE"| Forward
     Decision -->|"MODERATE"| Forward
@@ -52,13 +52,12 @@ flowchart TD
     XAI -->|"Factual context"| Inject
     Inject --> Forward
 
-    Forward -->|"SIMPLE"| Mini
+    Forward -->|"SIMPLE"| Primary
     Forward -->|"MODERATE"| Primary
     Forward -->|"COMPLEX"| XAI
     Forward -->|"ENRICH<br/>(enriched messages)"| Primary
     Forward -->|"META"| Primary
 
-    Mini --> Response
     Primary --> Response
     XAI --> Response
     Response --> Client
@@ -109,7 +108,7 @@ flowchart LR
         META["<b>META</b><br/>Client meta-prompts<br/>(follow-ups, titles, summaries)"]
     end
 
-    S --> Mini["Mini 4B"]
+    S --> Primary
     M --> Primary["Nano 30B"]
     C --> XAI["xAI Grok"]
     E --> Enrichment["Enrichment Pipeline<br/>then Nano 30B"]
@@ -160,5 +159,5 @@ flowchart TD
 | `/v1/models` | GET | List models from all backends |
 | `/api/route` | POST | Explicit routing control for testing |
 | `/stats` | GET | Routing statistics (placeholder) |
-| `/router/*` | * | Direct access to vLLM router (Mini 4B) — Traefik strip-prefix |
+| `/router/*` | * | Direct access to vLLM router (Orchestrator 8B) — Traefik strip-prefix |
 | `/primary/*` | * | Direct access to vLLM primary (Nano 30B) — Traefik strip-prefix |

@@ -134,12 +134,12 @@ if [ -n "$content" ] && [ "$content" != "null" ]; then
     PASS=$((PASS + 1))
     echo "Response: $(echo "$content" | head -c 100)..."
 
-    # Verify routing to Mini 4B
-    if [[ "$model" == *"Nemotron-Mini-4B"* ]]; then
-        echo -e "${GREEN}✓ Correctly routed to router model (Mini 4B)${NC}"
+    # Verify routing to primary model (SIMPLE now routes to Nano 30B)
+    if [[ "$model" == *"Nemotron-3-Nano-30B"* ]]; then
+        echo -e "${GREEN}✓ Correctly routed to primary model (Nano 30B)${NC}"
         PASS=$((PASS + 1))
     else
-        echo -e "${YELLOW}⚠ Routed to: $model (expected Mini 4B)${NC}"
+        echo -e "${YELLOW}⚠ Routed to: $model (expected Nano 30B)${NC}"
         WARN=$((WARN + 1))
     fi
 else
@@ -316,7 +316,7 @@ echo "10. Testing direct model access..."
 echo ""
 
 router_data='{
-  "model": "nvidia/Nemotron-Mini-4B-Instruct",
+  "model": "cyankiwi/Nemotron-Orchestrator-8B-AWQ-4bit",
   "messages": [{"role": "user", "content": "Hi there"}],
   "max_tokens": 30
 }'
@@ -369,7 +369,7 @@ echo ""
 
 test_endpoint "Root Endpoint" "$BASE_URL/"
 test_endpoint "Stats Endpoint" "$BASE_URL/stats"
-test_endpoint "Explicit Route API" "$BASE_URL/api/route" "POST" '{"route": "router", "data": {"messages": [{"role": "user", "content": "Hi"}], "max_tokens": 10}}'
+test_endpoint "Explicit Route API" "$BASE_URL/api/route" "POST" '{"route": "primary", "data": {"messages": [{"role": "user", "content": "Hi"}], "max_tokens": 10}}'
 
 echo ""
 
@@ -406,7 +406,7 @@ fi
 
 echo ""
 echo "Routing categories tested:"
-echo "  • SIMPLE   → Mini 4B (router model)"
+echo "  • SIMPLE   → Nano 30B (primary model)"
 echo "  • MODERATE → Nano 30B (primary model)"
 echo "  • COMPLEX  → xAI Grok (external API)"
 echo "  • ENRICH   → xAI context → Nano 30B (enrichment pipeline)"

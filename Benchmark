@@ -42,7 +42,7 @@ echo ""
 echo -e "${BLUE}=== Benchmark 1: Routing Latency by Category ===${NC}"
 echo ""
 
-echo -e "${YELLOW}SIMPLE Query (Mini 4B via router):${NC}"
+echo -e "${YELLOW}SIMPLE Query (Nano 30B via primary):${NC}"
 START=$(date +%s.%N)
 curl -s -X POST "$BASE_URL/v1/chat/completions" \
   -H "Content-Type: application/json" \
@@ -237,7 +237,7 @@ echo -e "${BLUE}=== Benchmark 6: Prompt-Based Routing Overhead ===${NC}"
 echo ""
 
 echo -e "${YELLOW}Measuring routing classification time:${NC}"
-# Direct call to Mini 4B (no routing)
+# Direct call to Orchestrator 8B (no routing)
 START=$(date +%s.%N)
 curl -s -X POST "$BASE_URL/router/v1/chat/completions" \
   -H "Content-Type: application/json" \
@@ -263,8 +263,8 @@ echo ""
 echo -e "${BLUE}=== Routing Architecture ===${NC}"
 echo ""
 
-echo -e "${YELLOW}SIMPLE - Router (Mini 4B):${NC}"
-curl -s "$BASE_URL/router/v1/models" | jq -r '.data[0] | "  Model: \(.id)\n  Role: Classification + Simple queries"' 2>/dev/null || echo "  Error fetching model info"
+echo -e "${YELLOW}SIMPLE - Router (Orchestrator 8B):${NC}"
+curl -s "$BASE_URL/router/v1/models" | jq -r '.data[0] | "  Model: \(.id)\n  Role: Classification only"' 2>/dev/null || echo "  Error fetching model info"
 echo ""
 
 echo -e "${YELLOW}MODERATE - Primary (Nano 30B):${NC}"
@@ -296,7 +296,7 @@ echo ""
 echo -e "${GREEN}Five-route routing system is operational!${NC}"
 echo ""
 echo "Architecture:"
-echo "  • SIMPLE   → Mini 4B: Fast classification + simple queries"
+echo "  • SIMPLE   → Nano 30B: Simple queries (classified by Orchestrator 8B)"
 echo "  • MODERATE → Nano 30B: Moderate complexity (local)"
 echo "  • COMPLEX  → Grok: Research-level complexity (xAI API)"
 echo "  • ENRICH   → Grok context fetch → Nano 30B: Real-time information"

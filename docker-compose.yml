@@ -76,11 +76,10 @@ services:
       - VLLM_USE_MODELSCOPE=false
       - HF_TOKEN=${HF_TOKEN}
     command: >
-      --model nvidia/Nemotron-Mini-4B-Instruct
-      --dtype bfloat16
-      --quantization fp8
+      --model cyankiwi/Nemotron-Orchestrator-8B-AWQ-4bit
+      
       --kv-cache-dtype auto
-      --gpu-memory-utilization 0.1
+      --gpu-memory-utilization 0.14
       --max-model-len 4096
       --port 8001
       --enforce-eager
