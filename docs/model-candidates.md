@@ -25,22 +25,9 @@ All distilled/pruned from larger Nemotron models. Staying in-family keeps compat
 
 - **Parameters:** 8B
 - **Why interesting:** Purpose-built for multi-model routing, task orchestration, and agentic workflows. This is literally designed for what we're doing — classifying queries and deciding which model handles them.
-- **Concern:** At 8B, fp16 weights are ~16 GB. Would need fp8 quantization (~8 GB) to fit in the 10% VRAM budget. Tight but possible.
+- **Concern:** At 8B, fp16 weights are ~16 GB. fp8 on-the-fly (~8 GB) fits but is tight.
 - **Link:** https://huggingface.co/nvidia/Nemotron-Orchestrator-8B
-
-### nvidia/NVIDIA-Nemotron-3-Nano-30B-A3B
-
-- **Parameters:** 30B total, ~3B active (Mixture of Experts)
-- **Why interesting:** MoE architecture means only 3B params are active per forward pass despite 30B total. Optimized for classification, summarization, and routing. This is the same architecture as our primary model but in BF16 — we could potentially use it as both router and primary if the active param count keeps latency low.
-- **Concern:** 30B total weights still need to fit in memory even if only 3B are active. BF16 weights would be ~60 GB — far too large for the router budget. Would need aggressive quantization, and even then the total weight footprint may be prohibitive for a router role.
-- **Link:** https://huggingface.co/nvidia/NVIDIA-Nemotron-3-Nano-30B-A3B-BF16
-
-### nvidia/NVIDIA-Nemotron-Nano-9B-v2
-
-- **Parameters:** 9B
-- **Why interesting:** Strong reasoning and classification capabilities. A step up from Mini 4B in quality without the MoE complexity.
-- **Concern:** Same sizing challenge as the Orchestrator 8B. fp16 ~18 GB, fp8 ~9 GB. Fits with fp8 but leaves minimal KV cache headroom in the 10% budget.
-- **Link:** https://huggingface.co/nvidia/NVIDIA-Nemotron-Nano-9B-v2
+- **AWQ 4-bit variant:** [cyankiwi/Nemotron-Orchestrator-8B-AWQ-4bit](https://huggingface.co/cyankiwi/Nemotron-Orchestrator-8B-AWQ-4bit) — ~4 GB weights, same footprint as current Mini 4B at fp8. AWQ is natively supported by vLLM (`--quantization awq`), so no serving stack change needed. This eliminates the VRAM concern entirely — fits comfortably in the 10% budget with ample KV cache headroom. Community quant (cyankiwi), safetensors format. Base model is Qwen3-8B fine-tuned by NVIDIA. NVIDIA license (research/dev only, fine for homelab).
 
 ### nvidia/Nemotron-Flash-3B
 
@@ -48,6 +35,29 @@ All distilled/pruned from larger Nemotron models. Staying in-family keeps compat
 - **Why interesting:** Ultra-low latency, designed for edge/on-device use. Smaller than our current 4B router, so it would be faster and use less VRAM. If classification accuracy is comparable to Mini 4B, this is a strict upgrade for the router role.
 - **Concern:** 3B may sacrifice classification quality. Needs benchmarking against Mini 4B on our actual routing prompt.
 - **Link:** https://huggingface.co/nvidia/Nemotron-Flash-3B
+
+## Migration Path: Classifier-Only Router
+
+The current Mini 4B does double duty — it classifies queries *and* answers SIMPLE ones directly. A purpose-built routing model like the Orchestrator wouldn't be good at answering general questions.
+
+The clean migration: **make the router classification-only.** Drop the SIMPLE route as a separate backend destination. SIMPLE and MODERATE both go to the primary model. The classification labels are preserved (the classifier still outputs SIMPLE vs MODERATE) but they route to the same backend.
+
+This gives us:
+
+| Classification | Route | Backend |
+|----------------|-------|---------|
+| SIMPLE | `primary` | Nano 30B (local) |
+| MODERATE | `primary` | Nano 30B (local) |
+| COMPLEX | `xai` | Grok (xAI API) |
+| ENRICH | `xai` + `primary` | Grok → Nano 30B |
+| META | `primary` | Nano 30B (local, bypasses classification) |
+
+The router model becomes single-purpose: read query, output one word, done. All generation happens elsewhere. This simplifies the architecture and makes the router model swappable without affecting response quality.
+
+Code changes required:
+- `get_model_url()`: map `'router'` → `PRIMARY_URL` instead of `ROUTER_URL`
+- Or simpler: change the classifier to output MODERATE instead of SIMPLE (merge the labels)
+- Remove SIMPLE-specific handling if any exists
 
 ## Evaluation Criteria
 
@@ -62,12 +72,10 @@ When testing a candidate router model, measure against the current Mini 4B basel
 
 Quick reference for estimating whether a model fits the router slot:
 
-| Model size | fp16 weights | fp8 weights | Fits in ~10 GB? |
-|-----------|-------------|------------|-----------------|
-| 3B | ~6 GB | ~3 GB | Yes (plenty of KV cache room) |
-| 4B (current) | ~8 GB | ~4 GB | Yes |
-| 8B | ~16 GB | ~8 GB | Tight — ~2 GB for KV cache |
-| 9B | ~18 GB | ~9 GB | Barely — ~1 GB for KV cache |
-| 30B MoE | ~60 GB | ~30 GB | No |
+| Model size | fp16 weights | fp8 weights | AWQ 4-bit | Fits in ~10 GB? |
+|-----------|-------------|------------|-----------|-----------------|
+| 3B | ~6 GB | ~3 GB | ~1.5 GB | Yes (plenty of KV cache room) |
+| 4B (current) | ~8 GB | ~4 GB | — | Yes |
+| 8B | ~16 GB | ~8 GB | ~4 GB | fp8: tight. AWQ 4-bit: yes, comfortably |
 
-The 8-9B models could fit with fp8 but leave very little room for KV cache. For a classification task (short prompts, 1-token output), that's probably fine. For anything requiring longer context windows, they'd need a larger VRAM allocation — which means stealing from the primary model.
+The AWQ 4-bit Orchestrator variant is the most promising upgrade path — same VRAM footprint as the current Mini 4B at fp8, but purpose-built for routing. Models 9B+ are excluded — they don't fit within the 10% VRAM budget at any quantization.
