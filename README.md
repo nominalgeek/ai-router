@@ -108,6 +108,8 @@ config/prompts/
   enrichment/
     system.md                   # Enrichment system prompt (sent to xAI)
     injection.md                # Context injection template (prepended for primary)
+  xai/
+    system.md                   # xAI system prompt (COMPLEX route)
   meta/
     system.md                   # Meta pipeline system prompt
 docker-compose.yml              # All services: traefik, ai-router, vllm-router, vllm-primary
@@ -178,8 +180,7 @@ These env vars control classification and enrichment behavior. Defaults work wel
 | Variable | Default | Description |
 |---|---|---|
 | `CLASSIFY_CONTEXT_BUDGET` | `2000` | Max chars of conversation history sent to classifier |
-| `CLASSIFY_MAX_TOKENS` | `512` | Max tokens for classification response (includes chain-of-thought) |
-| `ENRICH_MIN_MAX_TOKENS` | `1024` | Minimum max_tokens for enrichment route responses |
+| `XAI_MIN_MAX_TOKENS` | `16384` | Floor for max_tokens on xAI requests (prevents client low defaults) |
 | `VIRTUAL_MODEL` | `ai-router` | Model name exposed via `/v1/models` |
 
 ## Makefile Targets

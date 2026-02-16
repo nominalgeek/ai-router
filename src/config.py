@@ -47,10 +47,14 @@ XAI_SEARCH_TOOLS = os.getenv('XAI_SEARCH_TOOLS', 'web_search,x_search')
 # more of the router model's context window. ~4 chars ≈ 1 token.
 CLASSIFY_CONTEXT_BUDGET = int(os.getenv('CLASSIFY_CONTEXT_BUDGET', '2000'))
 
-# Max tokens the classifier can generate per request.  Must be large enough for
-# the router model's chain-of-thought (e.g. <think> block) plus the final
-# classification word.  Increase if swapping to a more verbose reasoning model.
-CLASSIFY_MAX_TOKENS = int(os.getenv('CLASSIFY_MAX_TOKENS', '512'))
+# Client max_tokens handling strategy for the classifier:
+#
+# ROUTER (local classifier): Strip max_tokens entirely, same rationale as the
+# primary model.  The Orchestrator 8B is a reasoning model that wraps its
+# decision in <think> blocks.  Any artificial cap risks truncating reasoning
+# before the classification word is emitted (observed at 56% failure rate with
+# a 512-token cap on multi-turn conversations).  vLLM's --max-model-len
+# (2,048) is the only limit needed — the model emits its label and stops.
 
 # Client max_tokens handling strategy:
 #

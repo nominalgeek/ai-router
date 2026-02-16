@@ -17,7 +17,6 @@ from src.config import (
     ENRICHMENT_SYSTEM_PROMPT,
     XAI_SEARCH_TOOLS,
     CLASSIFY_CONTEXT_BUDGET,
-    CLASSIFY_MAX_TOKENS,
 )
 from src.session_logger import SessionLogger
 
@@ -121,7 +120,7 @@ def determine_route(messages: list, session: SessionLogger = None) -> str:
         {"role": "system", "content": f"{date_context()}\n\n{ROUTING_SYSTEM_PROMPT}"},
         {"role": "user", "content": routing_prompt}
     ]
-    classify_params = {"max_tokens": CLASSIFY_MAX_TOKENS, "temperature": 0.0}
+    classify_params = {"temperature": 0.0}
     classify_url = f"{ROUTER_URL}/v1/chat/completions"
 
     if session:

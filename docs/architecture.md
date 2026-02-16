@@ -28,7 +28,7 @@ flowchart TD
     subgraph Backends
         direction TB
         Mini["<b>Router Model</b><br/>Nemotron Orchestrator 8B AWQ<br/>vllm-router :8001<br/><i>~13 GB VRAM (14%)</i>"]
-        Primary["<b>Primary Model</b><br/>Nemotron Nano 30B<br/>vllm-primary :8000<br/><i>~77 GB VRAM (80%)</i>"]
+        Primary["<b>Primary Model</b><br/>Nemotron Nano 30B<br/>vllm-primary :8000<br/><i>~62 GB VRAM (65%)</i>"]
         XAI["<b>xAI API</b><br/>grok-4-1-fast-reasoning<br/>api.x.ai<br/><i>External</i>"]
     end
 
@@ -40,7 +40,7 @@ flowchart TD
     MetaCheck -->|"Yes — single msg >300 chars<br/>with embedded history markers"| MetaInject
     MetaCheck -->|"No"| Classify
     MetaInject --> Forward
-    Classify -->|"POST /v1/chat/completions<br/>max_tokens=10, temp=0"| Mini
+    Classify -->|"POST /v1/chat/completions<br/>temp=0"| Mini
     Mini -->|"SIMPLE / MODERATE /<br/>COMPLEX / ENRICH"| Decision
 
     Decision -->|"SIMPLE"| Forward

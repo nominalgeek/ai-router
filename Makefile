@@ -203,7 +203,7 @@ review: ## Run session-review agent on accumulated logs
 test-router: ## Test router model with sample request
 	curl -X POST http://localhost/router/v1/chat/completions \
 		-H "Content-Type: application/json" \
-		-d '{"model": "nvidia/Nemotron-Mini-4B-Instruct", "messages": [{"role": "user", "content": "Hello, how are you?"}], "max_tokens": 50}'
+		-d '{"model": "cyankiwi/Nemotron-Orchestrator-8B-AWQ-4bit", "messages": [{"role": "user", "content": "Hello, how are you?"}], "max_tokens": 50}'
 
 test-primary: ## Test primary model with sample request
 	curl -X POST http://localhost/primary/v1/chat/completions \
