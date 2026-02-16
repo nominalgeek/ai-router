@@ -70,7 +70,7 @@ class SessionLogger:
         step_entry['response_content'] = None
         self.data['steps'].append(step_entry)
 
-    def end_step(self, status=None, response_content=None, error=None):
+    def end_step(self, status=None, response_content=None, finish_reason=None, error=None):
         """Finish timing the current step and record its result."""
         if not self.data['steps']:
             return
@@ -78,6 +78,7 @@ class SessionLogger:
         if self._step_start:
             step['duration_ms'] = round((time.time() - self._step_start) * 1000)
         step['status'] = status
+        step['finish_reason'] = finish_reason
         if error:
             step['response_content'] = f"[error: {error}]"
         elif response_content is not None:

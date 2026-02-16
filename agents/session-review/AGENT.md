@@ -47,6 +47,7 @@ steps[]             — ordered list of API calls:
   params            — request parameters (max_tokens, temperature, etc.)
   duration_ms       — how long the step took
   status            — HTTP status code
+  finish_reason     — why the model stopped generating (e.g. "stop", "length")
   response_content  — the model's response text (truncated to 2000 chars)
 total_ms            — end-to-end request time
 error               — error message if failed, null otherwise
@@ -70,7 +71,7 @@ Look for these specific problem categories:
 - **Stale context**: The enrichment context contains outdated information or doesn't match what was asked.
 
 #### Response Quality Issues
-- **Truncated responses**: `response_content` ends abruptly or `finish_reason` is "length" — indicates `max_tokens` was too low for the response.
+- **Truncated responses**: `finish_reason` is "length" — the model hit its token limit before completing the response. Cross-reference with `response_content` ending abruptly to confirm.
 - **Null content with reasoning only**: The model spent all tokens on chain-of-thought (`reasoning_content`) and produced `content: null`. This is especially relevant for enrich routes where the injected context inflates the prompt.
 - **Reasoning model leaking**: The primary model's `<think>` blocks or reasoning content appearing in the actual response shown to the user.
 

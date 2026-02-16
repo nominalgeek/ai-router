@@ -145,7 +145,7 @@ Every routed request produces a JSON session file in `logs/sessions/` capturing 
 
 ```bash
 # List recent sessions
-ls -lt logs/sessions/ | head 10
+ls -lt logs/sessions/ | head -10
 
 # Inspect a session
 cat logs/sessions/<filename>.json | python -m json.tool
