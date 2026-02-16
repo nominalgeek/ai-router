@@ -219,6 +219,14 @@ def forward_request(target_url: str, path: str, data: Dict[Any, Any], route: str
         url = f"{target_url}{path}"
         logger.info(f"Forwarding request to {url}")
 
+        # Inject current date into messages so all models know the real date
+        if 'messages' in data:
+            current_date = datetime.now().strftime('%B %d, %Y')
+            data['messages'].insert(0, {
+                "role": "system",
+                "content": f"Today's date is {current_date}."
+            })
+
         # Set up headers
         headers = {'Content-Type': 'application/json'}
 
