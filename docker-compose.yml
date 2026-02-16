@@ -30,15 +30,19 @@ services:
     image: python:3.12-slim
     container_name: ai-router
     restart: unless-stopped
-    command: bash -c "pip install --no-cache-dir flask requests && python router.py"
+    user: "1000:1000"
+    command: bash -c "pip install --no-cache-dir --user -r requirements.txt && python router.py"
     volumes:
       - ./router.py:/app/router.py
       - ./src:/app/src
+      - ./requirements.txt:/app/requirements.txt
       - ./config:/app/config
       - ./logs:/var/log/ai-router
     working_dir: /app
     environment:
+      - HOME=/tmp
       - XAI_API_KEY=${XAI_API_KEY}
+      - XAI_SEARCH_TOOLS=${XAI_SEARCH_TOOLS:-web_search,x_search}
       - ROUTER_URL=http://router:8001
       - PRIMARY_URL=http://primary:8000
     depends_on:

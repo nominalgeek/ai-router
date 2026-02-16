@@ -1,5 +1,6 @@
 """Session-based request logging — one JSON file per request lifecycle."""
 
+import copy
 import os
 import json
 import uuid
@@ -27,6 +28,7 @@ class SessionLogger:
             'id': self.id,
             'timestamp': self.timestamp.isoformat(timespec='milliseconds'),
             'user_query': None,
+            'client_messages': None,
             'route': None,
             'classification_raw': None,
             'classification_ms': None,
@@ -37,8 +39,9 @@ class SessionLogger:
         self._step_start = None
 
     def set_query(self, messages):
-        """Extract and store the last user message as the query."""
+        """Store the full original messages and extract the last user message as the query."""
         if messages:
+            self.data['client_messages'] = copy.deepcopy(messages)
             for msg in reversed(messages):
                 if msg.get('role') == 'user':
                     content = msg.get('content', '')

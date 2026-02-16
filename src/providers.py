@@ -14,6 +14,7 @@ from src.config import (
     ROUTER_MODEL, PRIMARY_MODEL,
     ROUTING_SYSTEM_PROMPT, ROUTING_PROMPT,
     ENRICHMENT_SYSTEM_PROMPT,
+    XAI_SEARCH_TOOLS,
 )
 from src.session_logger import SessionLogger
 
@@ -39,18 +40,25 @@ def determine_route(messages: list, session: SessionLogger = None) -> str:
     # Build routing classification prompt from external template
     routing_prompt = ROUTING_PROMPT.format(query=last_message)
 
+    classify_messages = [
+        {"role": "system", "content": f"Today's date is {datetime.now().strftime('%B %d, %Y')}.\n\n{ROUTING_SYSTEM_PROMPT}"},
+        {"role": "user", "content": routing_prompt}
+    ]
+    classify_params = {"max_tokens": 10, "temperature": 0.0}
+    classify_url = f"{ROUTER_URL}/v1/chat/completions"
+
+    if session:
+        session.begin_step('classification', 'router', classify_url, ROUTER_MODEL,
+                           messages=classify_messages, params=classify_params)
+
     classify_start = time.time()
     try:
         # Ask Mini 4B router to classify the query
         response = requests.post(
-            f"{ROUTER_URL}/v1/chat/completions",
+            classify_url,
             json={
-                "messages": [
-                    {"role": "system", "content": f"Today's date is {datetime.now().strftime('%B %d, %Y')}.\n\n{ROUTING_SYSTEM_PROMPT}"},
-                    {"role": "user", "content": routing_prompt}
-                ],
-                "max_tokens": 10,
-                "temperature": 0.0  # Deterministic
+                "messages": classify_messages,
+                **classify_params,
             },
             timeout=10  # Timeout for routing decision
         )
@@ -60,6 +68,7 @@ def determine_route(messages: list, session: SessionLogger = None) -> str:
         if response.status_code != 200:
             logger.warning(f"Routing classification returned status {response.status_code}, defaulting to primary")
             if session:
+                session.end_step(status=response.status_code, error=f'status {response.status_code}')
                 session.set_route('primary', f'[error: status {response.status_code}]', classify_ms)
             return 'primary'
 
@@ -85,6 +94,7 @@ def determine_route(messages: list, session: SessionLogger = None) -> str:
             logger.warning(f"Routing classification unclear: '{decision}', defaulting to primary")
 
         if session:
+            session.end_step(status=response.status_code, response_content=decision)
             session.set_route(route, decision, classify_ms)
         return route
 
@@ -92,52 +102,77 @@ def determine_route(messages: list, session: SessionLogger = None) -> str:
         classify_ms = (time.time() - classify_start) * 1000
         logger.warning("Routing classification timeout, defaulting to primary")
         if session:
+            session.end_step(error='timeout')
             session.set_route('primary', '[timeout]', classify_ms)
         return 'primary'
     except Exception as e:
         classify_ms = (time.time() - classify_start) * 1000
         logger.error(f"Error in prompt-based routing: {str(e)}, defaulting to primary")
         if session:
+            session.end_step(error=str(e))
             session.set_route('primary', f'[error: {str(e)}]', classify_ms)
         return 'primary'
 
 
+def _build_search_tools() -> list:
+    """Build the tools list from the XAI_SEARCH_TOOLS config."""
+    if not XAI_SEARCH_TOOLS:
+        return []
+    return [{"type": t.strip()} for t in XAI_SEARCH_TOOLS.split(',') if t.strip()]
+
+
 def fetch_enrichment_context(messages: list, session: SessionLogger = None) -> Optional[str]:
     """
-    Call xAI to retrieve current/real-time context for the user's query.
+    Call xAI /v1/responses to retrieve current/real-time context for the user's query.
+    Uses web_search and x_search tools when configured via XAI_SEARCH_TOOLS.
     Returns the enrichment text, or None if the call fails.
     """
     last_message = messages[-1].get('content', '') if messages else ''
 
-    enrich_messages = [
-        {"role": "system", "content": ENRICHMENT_SYSTEM_PROMPT},
+    current_date = datetime.now().strftime('%B %d, %Y')
+    enrich_input = [
+        {"role": "system", "content": f"Today's date is {current_date}.\n\n{ENRICHMENT_SYSTEM_PROMPT}"},
         {"role": "user", "content": last_message}
     ]
 
+    tools = _build_search_tools()
+    enrich_url = f"{XAI_API_URL}/v1/responses"
+
+    request_body = {
+        "input": enrich_input,
+        "model": XAI_MODEL,
+        "max_output_tokens": 1024,
+        "temperature": 0.0,
+    }
+    if tools:
+        request_body["tools"] = tools
+
     if session:
-        session.begin_step('enrichment', 'xai', f"{XAI_API_URL}/v1/chat/completions",
-                           XAI_MODEL, messages=enrich_messages)
+        session.begin_step('enrichment', 'xai', enrich_url, XAI_MODEL,
+                           messages=enrich_input,
+                           params={k: v for k, v in request_body.items() if k != 'input'})
 
     try:
         response = requests.post(
-            f"{XAI_API_URL}/v1/chat/completions",
-            json={
-                "messages": enrich_messages,
-                "model": XAI_MODEL,
-                "max_tokens": 1024,
-                "temperature": 0.0
-            },
+            enrich_url,
+            json=request_body,
             headers={
                 'Content-Type': 'application/json',
                 'Authorization': f'Bearer {XAI_API_KEY}'
             },
-            timeout=30
+            timeout=60
         )
 
         if response.status_code == 200:
             result = response.json()
-            message = result['choices'][0]['message']
-            context = (message.get('content') or message.get('reasoning_content') or '').strip()
+            # Extract text from /v1/responses output format
+            context = ''
+            for item in result.get('output', []):
+                if item.get('type') == 'message':
+                    for block in item.get('content', []):
+                        if block.get('type') == 'output_text':
+                            context += block.get('text', '')
+            context = context.strip()
             if context:
                 logger.info(f"Enrichment context retrieved ({len(context)} chars)")
                 if session:
@@ -189,13 +224,15 @@ def forward_request(target_url: str, path: str, data: Dict[Any, Any], route: str
         url = f"{target_url}{path}"
         logger.info(f"Forwarding request to {url}")
 
-        # Inject current date into messages so all models know the real date
+        # Inject current date into the first system message, or prepend one
         if 'messages' in data:
             current_date = datetime.now().strftime('%B %d, %Y')
-            data['messages'].insert(0, {
-                "role": "system",
-                "content": f"Today's date is {current_date}."
-            })
+            date_line = f"Today's date is {current_date}."
+            first_system = next((m for m in data['messages'] if m.get('role') == 'system'), None)
+            if first_system:
+                first_system['content'] = f"{date_line}\n\n{first_system['content']}"
+            else:
+                data['messages'].insert(0, {"role": "system", "content": date_line})
 
         # Set up headers
         headers = {'Content-Type': 'application/json'}

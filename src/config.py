@@ -20,6 +20,9 @@ XAI_MODEL = os.getenv('XAI_MODEL', 'grok-4-1-fast-reasoning')
 ROUTER_MODEL = os.getenv('ROUTER_MODEL', 'nvidia/Nemotron-Mini-4B-Instruct')
 PRIMARY_MODEL = os.getenv('PRIMARY_MODEL', 'unsloth/NVIDIA-Nemotron-3-Nano-30B-A3B-NVFP4')
 
+# xAI search tools for enrichment (comma-separated: "web_search,x_search" or "" to disable)
+XAI_SEARCH_TOOLS = os.getenv('XAI_SEARCH_TOOLS', 'web_search,x_search')
+
 # Prompt file paths
 ROUTING_PROMPT_PATH = os.getenv('ROUTING_PROMPT_PATH', '/app/config/routing-prompt.md')
 ROUTING_SYSTEM_PROMPT_PATH = os.getenv('ROUTING_SYSTEM_PROMPT_PATH', '/app/config/routing-system-prompt.md')

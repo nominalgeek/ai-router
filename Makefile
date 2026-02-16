@@ -1,10 +1,23 @@
-.PHONY: help up down restart logs health clean backup restore
+.PHONY: help up down restart logs health clean backup restore venv
+
+VENV_DIR := .venv
+PYTHON := $(VENV_DIR)/bin/python
+PIP := $(VENV_DIR)/bin/pip
 
 help: ## Show this help message
 	@echo 'Usage: make [target]'
 	@echo ''
 	@echo 'Available targets:'
 	@awk 'BEGIN {FS = ":.*?## "} /^[a-zA-Z_-]+:.*?## / {printf "  %-15s %s\n", $$1, $$2}' $(MAKEFILE_LIST)
+
+venv: $(VENV_DIR)/bin/activate ## Create Python venv and install dependencies
+
+$(VENV_DIR)/bin/activate: requirements.txt
+	python3 -m venv $(VENV_DIR)
+	$(PIP) install --upgrade pip
+	$(PIP) install -r requirements.txt
+	@touch $(VENV_DIR)/bin/activate
+	@echo "Activate with: source $(VENV_DIR)/bin/activate"
 
 up: ## Start all services
 	docker compose up -d

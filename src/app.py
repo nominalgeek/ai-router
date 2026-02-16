@@ -92,13 +92,17 @@ def chat_completions():
                     context=context,
                     date=datetime.now().strftime('%B %d, %Y')
                 )
-                # Insert enrichment context right before the last user message
-                # so it's close to the query in the context window
-                insert_pos = len(data['messages']) - 1
-                data['messages'].insert(insert_pos, {
-                    "role": "system",
-                    "content": injection
-                })
+                # Append enrichment context to an existing system message,
+                # or insert one before the last user message
+                first_system = next((m for m in data['messages'] if m.get('role') == 'system'), None)
+                if first_system:
+                    first_system['content'] = f"{first_system['content']}\n\n{injection}"
+                else:
+                    insert_pos = len(data['messages']) - 1
+                    data['messages'].insert(insert_pos, {
+                        "role": "system",
+                        "content": injection
+                    })
                 logger.info("Enrichment context injected, forwarding to primary model")
             else:
                 logger.warning("Enrichment context unavailable, forwarding to primary model without context")
