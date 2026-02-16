@@ -91,7 +91,6 @@ docs/
 Benchmark                       # Bash script — latency, throughput, concurrency benchmarks
 Test                            # Bash script — integration test suite (health, routing, endpoints)
 logs/sessions/                  # Auto-generated per-request JSON session logs
-vllm/                           # Vendored vLLM source (not project code)
 ```
 
 ## Coding Conventions
