@@ -10,6 +10,7 @@ Routes requests to either:
 import os
 import json
 import logging
+from datetime import datetime
 from flask import Flask, request, jsonify, Response
 import requests
 from typing import Dict, Any, Optional
@@ -103,7 +104,7 @@ def determine_route(messages: list) -> str:
             f"{ROUTER_URL}/v1/chat/completions",
             json={
                 "messages": [
-                    {"role": "system", "content": ROUTING_SYSTEM_PROMPT},
+                    {"role": "system", "content": f"Today's date is {datetime.now().strftime('%B %d, %Y')}.\n\n{ROUTING_SYSTEM_PROMPT}"},
                     {"role": "user", "content": routing_prompt}
                 ],
                 "max_tokens": 10,
@@ -112,26 +113,29 @@ def determine_route(messages: list) -> str:
             timeout=10  # Timeout for routing decision
         )
 
-        if response.status_code == 200:
-            result = response.json()
-            # Extract decision from response (handle both content and reasoning_content)
-            message = result['choices'][0]['message']
-            decision = (message.get('content') or message.get('reasoning_content') or '').strip().upper()
+        if response.status_code != 200:
+            logger.warning(f"Routing classification returned status {response.status_code}, defaulting to primary")
+            return 'primary'
 
-            if 'ENRICH' in decision:
-                logger.info("Routing to enrichment pipeline: prompt-based classification (ENRICH)")
-                return 'enrich'
-            elif 'SIMPLE' in decision:
-                logger.info("Routing to router model: prompt-based classification (SIMPLE)")
-                return 'router'
-            elif 'MODERATE' in decision:
-                logger.info("Routing to primary model: prompt-based classification (MODERATE)")
-                return 'primary'
-            elif 'COMPLEX' in decision:
-                logger.info("Routing to xAI model: prompt-based classification (COMPLEX)")
-                return 'xai'
+        result = response.json()
+        # Extract decision from response (handle both content and reasoning_content)
+        message = result['choices'][0]['message']
+        decision = (message.get('content') or message.get('reasoning_content') or '').strip().upper()
 
-        # Fallback to primary if classification fails
+        if 'ENRICH' in decision:
+            logger.info("Routing to enrichment pipeline: prompt-based classification (ENRICH)")
+            return 'enrich'
+        elif 'SIMPLE' in decision:
+            logger.info("Routing to router model: prompt-based classification (SIMPLE)")
+            return 'router'
+        elif 'MODERATE' in decision:
+            logger.info("Routing to primary model: prompt-based classification (MODERATE)")
+            return 'primary'
+        elif 'COMPLEX' in decision:
+            logger.info("Routing to xAI model: prompt-based classification (COMPLEX)")
+            return 'xai'
+
+        # Fallback to primary if classification didn't match any keyword
         logger.warning(f"Routing classification unclear: '{decision}', defaulting to primary")
         return 'primary'
 
@@ -288,7 +292,7 @@ def health():
         if XAI_API_KEY:
             try:
                 xai_response = requests.get(
-                    f"{XAI_API_URL}/models",
+                    f"{XAI_API_URL}/v1/models",
                     headers={'Authorization': f'Bearer {XAI_API_KEY}'},
                     timeout=5
                 )
@@ -338,9 +342,14 @@ def chat_completions():
             context = fetch_enrichment_context(data['messages'])
 
             if context:
-                injection = ENRICHMENT_INJECTION_PROMPT.format(context=context)
-                # Prepend the enrichment context as a system message
-                data['messages'].insert(0, {
+                injection = ENRICHMENT_INJECTION_PROMPT.format(
+                    context=context,
+                    date=datetime.now().strftime('%B %d, %Y')
+                )
+                # Insert enrichment context right before the last user message
+                # so it's close to the query in the context window
+                insert_pos = len(data['messages']) - 1
+                data['messages'].insert(insert_pos, {
                     "role": "system",
                     "content": injection
                 })
@@ -437,10 +446,10 @@ def api_route():
                 route = determine_route(data['messages'])
             else:
                 route = 'primary'
-        elif route not in ['router', 'primary']:
+        elif route not in ['router', 'primary', 'xai', 'enrich']:
             return jsonify({
                 'error': 'Invalid route',
-                'message': 'Route must be "router", "primary", or "auto"'
+                'message': 'Route must be "router", "primary", "xai", "enrich", or "auto"'
             }), 400
         
         target_url = get_model_url(route)

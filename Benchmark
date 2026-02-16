@@ -13,7 +13,7 @@ BASE_URL="http://localhost"
 
 echo -e "${BLUE}==================================="
 echo "AI Router Benchmark Suite"
-echo "Three-Tier Routing System"
+echo "Four-Category Routing + Enrichment"
 echo "===================================${NC}"
 echo ""
 
@@ -38,8 +38,8 @@ curl -s -X POST "$BASE_URL/v1/chat/completions" \
 echo -e "${GREEN}✓ Warmup complete${NC}"
 echo ""
 
-# Benchmark 1: Three-Tier Routing Latency
-echo -e "${BLUE}=== Benchmark 1: Three-Tier Routing Latency ===${NC}"
+# Benchmark 1: Routing Latency by Category
+echo -e "${BLUE}=== Benchmark 1: Routing Latency by Category ===${NC}"
 echo ""
 
 echo -e "${YELLOW}SIMPLE Query (Mini 4B via router):${NC}"
@@ -92,6 +92,24 @@ LATENCY=$(echo "$END - $START" | bc)
 MODEL=$(cat /tmp/complex_response.json | jq -r '.model' 2>/dev/null || echo "Error")
 RESPONSE=$(cat /tmp/complex_response.json | jq -r '.choices[0].message.content // .choices[0].message.reasoning_content' 2>/dev/null || echo "Error")
 echo "  Latency: ${LATENCY}s"
+echo "  Model: ${MODEL}"
+echo "  Response: ${RESPONSE:0:100}"
+echo ""
+
+echo -e "${YELLOW}ENRICH Query (xAI context → Nano 30B):${NC}"
+START=$(date +%s.%N)
+curl -s -X POST "$BASE_URL/v1/chat/completions" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "messages": [{"role": "user", "content": "What are the latest developments in AI regulation this week?"}],
+    "max_tokens": 200,
+    "stream": false
+  }' > /tmp/enrich_response.json
+END=$(date +%s.%N)
+LATENCY=$(echo "$END - $START" | bc)
+MODEL=$(cat /tmp/enrich_response.json | jq -r '.model' 2>/dev/null || echo "Error")
+RESPONSE=$(cat /tmp/enrich_response.json | jq -r '.choices[0].message.content // .choices[0].message.reasoning_content' 2>/dev/null || echo "Error")
+echo "  Latency: ${LATENCY}s (includes xAI context fetch + primary inference)"
 echo "  Model: ${MODEL}"
 echo "  Response: ${RESPONSE:0:100}"
 echo ""
@@ -242,20 +260,26 @@ echo "  Routing overhead: ${OVERHEAD}s"
 echo ""
 
 # Model Information
-echo -e "${BLUE}=== Three-Tier Architecture ===${NC}"
+echo -e "${BLUE}=== Routing Architecture ===${NC}"
 echo ""
 
-echo -e "${YELLOW}Tier 1 - Router (Mini 4B):${NC}"
+echo -e "${YELLOW}SIMPLE - Router (Mini 4B):${NC}"
 curl -s "$BASE_URL/router/v1/models" | jq -r '.data[0] | "  Model: \(.id)\n  Role: Classification + Simple queries"' 2>/dev/null || echo "  Error fetching model info"
 echo ""
 
-echo -e "${YELLOW}Tier 2 - Primary (Nano 30B):${NC}"
+echo -e "${YELLOW}MODERATE - Primary (Nano 30B):${NC}"
 curl -s "$BASE_URL/primary/v1/models" | jq -r '.data[0] | "  Model: \(.id)\n  Role: Moderate complexity queries"' 2>/dev/null || echo "  Error fetching model info"
 echo ""
 
-echo -e "${YELLOW}Tier 3 - xAI (Grok):${NC}"
+echo -e "${YELLOW}COMPLEX - xAI (Grok):${NC}"
 echo "  Model: grok-4-1-fast-reasoning"
 echo "  Role: Highly complex research queries"
+echo ""
+
+echo -e "${YELLOW}ENRICH - xAI context → Primary (Nano 30B):${NC}"
+echo "  Context: grok-4-1-fast-reasoning (retrieval)"
+echo "  Inference: Nano 30B (with injected context)"
+echo "  Role: Queries requiring current/real-time information"
 echo ""
 
 # Summary
@@ -263,20 +287,21 @@ echo -e "${BLUE}==================================="
 echo "Benchmark Complete"
 echo "===================================${NC}"
 echo ""
-echo -e "${GREEN}Three-tier routing system is operational!${NC}"
+echo -e "${GREEN}Four-category routing system is operational!${NC}"
 echo ""
 echo "Architecture:"
-echo "  • Mini 4B: Fast classification + simple queries"
-echo "  • Nano 30B: Moderate complexity (local)"
-echo "  • Grok: Research-level complexity (xAI API)"
+echo "  • SIMPLE   → Mini 4B: Fast classification + simple queries"
+echo "  • MODERATE → Nano 30B: Moderate complexity (local)"
+echo "  • COMPLEX  → Grok: Research-level complexity (xAI API)"
+echo "  • ENRICH   → Grok context fetch → Nano 30B: Real-time information"
 echo ""
 echo "Next steps:"
-echo "  • Run './Test' to verify routing"
+echo "  • Run 'make test' to verify routing"
 echo "  • Monitor GPU: nvidia-smi"
-echo "  • Adjust classification prompt in router.py"
+echo "  • Adjust classification prompts in config/"
 echo ""
 
 # Cleanup
-rm -f /tmp/simple_response.json /tmp/moderate_response.json /tmp/complex_response.json
+rm -f /tmp/simple_response.json /tmp/moderate_response.json /tmp/complex_response.json /tmp/enrich_response.json
 rm -f /tmp/router_throughput.json /tmp/primary_throughput.json
 rm -f /tmp/primary_context.json

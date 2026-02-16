@@ -27,11 +27,23 @@ logs-primary: ## Follow logs for primary service
 logs-ai: ## Follow logs for ai-router service
 	docker compose logs -f ai-router
 
-health: ## Check health of all services
+status: ## Quick health check (one-line summary)
+	@r=$$(curl -sf http://localhost/health 2>/dev/null | jq -r '.status // "unreachable"'); \
+	 t=$$(curl -sf http://localhost:8080/api/overview >/dev/null 2>&1 && echo "up" || echo "down"); \
+	 if [ "$$r" = "healthy" ] && [ "$$t" = "up" ]; then \
+	   echo "✅ All systems healthy"; \
+	 else \
+	   echo "⚠️  router=$$r traefik=$$t"; \
+	 fi
+
+health: ## Check health of all services (verbose)
 	@echo "=== Service Status ==="
 	@docker compose ps
 	@echo ""
 	@echo "=== Health Checks ==="
+	@echo "AI Router:"
+	@curl -s http://localhost/health | jq . || echo "  ❌ Not responding"
+	@echo ""
 	@echo "Router Model:"
 	@curl -s http://localhost/router/health | jq . || echo "  ❌ Not responding"
 	@echo ""
@@ -78,15 +90,21 @@ restore: ## Restore from latest backup
 		ubuntu bash -c "cd /data && tar xzf /backup/$$(ls -t /backup/*.tar.gz | head -1) --strip-components=1"
 	@echo "✓ Restored"
 
+test: ## Run full test suite
+	./Test
+
+benchmark: ## Run benchmark suite
+	./Benchmark
+
 test-router: ## Test router model with sample request
 	curl -X POST http://localhost/router/v1/chat/completions \
 		-H "Content-Type: application/json" \
-		-d '{"model": "unsloth/NVIDIA-Nemotron-3-Nano-30B-A3B-NVFP4", "messages": [{"role": "user", "content": "Hello, how are you?"}], "max_tokens": 50}'
+		-d '{"model": "nvidia/Nemotron-Mini-4B-Instruct", "messages": [{"role": "user", "content": "Hello, how are you?"}], "max_tokens": 50}'
 
 test-primary: ## Test primary model with sample request
 	curl -X POST http://localhost/primary/v1/chat/completions \
 		-H "Content-Type: application/json" \
-		-d '{"model": "unsloth/DeepSeek-R1-Distill-Llama-8B-unsloth-bnb-4bit", "messages": [{"role": "user", "content": "Explain quantum computing briefly"}], "max_tokens": 200}'
+		-d '{"model": "unsloth/NVIDIA-Nemotron-3-Nano-30B-A3B-NVFP4", "messages": [{"role": "user", "content": "Explain quantum computing briefly"}], "max_tokens": 200}'
 
 pull: ## Pull latest images
 	docker compose pull

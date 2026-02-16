@@ -5,6 +5,7 @@ set -e
 
 echo "==================================="
 echo "AI Router Test Suite"
+echo "Four-Tier Routing + Enrichment"
 echo "==================================="
 echo ""
 
@@ -13,6 +14,11 @@ RED='\033[0;31m'
 GREEN='\033[0;32m'
 YELLOW='\033[1;33m'
 NC='\033[0m' # No Color
+
+# Counters
+PASS=0
+FAIL=0
+WARN=0
 
 # Base URL
 BASE_URL="http://localhost"
@@ -39,10 +45,12 @@ test_endpoint() {
     
     if [ "$http_code" == "200" ] || [ "$http_code" == "201" ]; then
         echo -e "${GREEN}✓ PASS${NC} (HTTP $http_code)"
+        PASS=$((PASS + 1))
         return 0
     else
         echo -e "${RED}✗ FAIL${NC} (HTTP $http_code)"
         echo "Response: $body"
+        FAIL=$((FAIL + 1))
         return 1
     fi
 }
@@ -123,16 +131,20 @@ model=$(echo "$response" | jq -r '.model // empty')
 
 if [ -n "$content" ] && [ "$content" != "null" ]; then
     echo -e "${GREEN}✓ Simple query successful${NC}"
+    PASS=$((PASS + 1))
     echo "Response: $(echo "$content" | head -c 100)..."
 
     # Verify routing to Mini 4B
     if [[ "$model" == *"Nemotron-Mini-4B"* ]]; then
         echo -e "${GREEN}✓ Correctly routed to router model (Mini 4B)${NC}"
+        PASS=$((PASS + 1))
     else
         echo -e "${YELLOW}⚠ Routed to: $model (expected Mini 4B)${NC}"
+        WARN=$((WARN + 1))
     fi
 else
     echo -e "${RED}✗ Simple query failed${NC}"
+    FAIL=$((FAIL + 1))
     echo "Response: $response"
 fi
 
@@ -159,16 +171,20 @@ model=$(echo "$response" | jq -r '.model // empty')
 
 if [ -n "$content" ] && [ "$content" != "null" ]; then
     echo -e "${GREEN}✓ Moderate query successful${NC}"
+    PASS=$((PASS + 1))
     echo "Response: $(echo "$content" | head -c 100)..."
 
     # Verify routing to Nano 30B
     if [[ "$model" == *"Nemotron-3-Nano-30B"* ]]; then
         echo -e "${GREEN}✓ Correctly routed to primary model (Nano 30B)${NC}"
+        PASS=$((PASS + 1))
     else
         echo -e "${YELLOW}⚠ Routed to: $model (expected Nano 30B)${NC}"
+        WARN=$((WARN + 1))
     fi
 else
     echo -e "${RED}✗ Moderate query failed${NC}"
+    FAIL=$((FAIL + 1))
     echo "Response: $response"
 fi
 
@@ -195,23 +211,67 @@ model=$(echo "$response" | jq -r '.model // empty')
 
 if [ -n "$content" ] && [ "$content" != "null" ]; then
     echo -e "${GREEN}✓ Highly complex query successful${NC}"
+    PASS=$((PASS + 1))
     echo "Response: $(echo "$content" | head -c 100)..."
 
     # Verify routing to xAI
     if [[ "$model" == *"grok"* ]]; then
         echo -e "${GREEN}✓ Correctly routed to xAI model (Grok)${NC}"
+        PASS=$((PASS + 1))
     else
         echo -e "${YELLOW}⚠ Routed to: $model (expected Grok)${NC}"
+        WARN=$((WARN + 1))
     fi
 else
     echo -e "${RED}✗ Highly complex query failed${NC}"
+    FAIL=$((FAIL + 1))
+    echo "Response: $response"
+fi
+
+echo ""
+
+# Test enrichment query routing
+echo "8. Testing enrichment query routing..."
+echo ""
+
+enrich_data='{
+  "messages": [{"role": "user", "content": "What is the current weather in Tokyo right now?"}],
+  "max_tokens": 200,
+  "temperature": 0.7
+}'
+
+echo "Sending enrichment query: 'What is the current weather in Tokyo right now?'"
+response=$(curl -s -X POST "$BASE_URL/v1/chat/completions" \
+    -H "Content-Type: application/json" \
+    -d "$enrich_data")
+
+# Check for either content or reasoning_content (for reasoning models)
+content=$(echo "$response" | jq -r '.choices[0].message.content // .choices[0].message.reasoning_content // empty')
+model=$(echo "$response" | jq -r '.model // empty')
+
+if [ -n "$content" ] && [ "$content" != "null" ]; then
+    echo -e "${GREEN}✓ Enrichment query successful${NC}"
+    PASS=$((PASS + 1))
+    echo "Response: $(echo "$content" | head -c 100)..."
+
+    # Enrichment routes to primary model after context injection
+    if [[ "$model" == *"Nemotron-3-Nano-30B"* ]]; then
+        echo -e "${GREEN}✓ Correctly routed through enrichment pipeline to primary model${NC}"
+        PASS=$((PASS + 1))
+    else
+        echo -e "${YELLOW}⚠ Routed to: $model (expected Nano 30B via enrichment)${NC}"
+        WARN=$((WARN + 1))
+    fi
+else
+    echo -e "${RED}✗ Enrichment query failed${NC}"
+    FAIL=$((FAIL + 1))
     echo "Response: $response"
 fi
 
 echo ""
 
 # Test direct router access
-echo "8. Testing direct model access..."
+echo "9. Testing direct model access..."
 echo ""
 
 router_data='{
@@ -229,8 +289,10 @@ response=$(curl -s -X POST "$BASE_URL/router/v1/chat/completions" \
 content=$(echo "$response" | jq -r '.choices[0].message.content // .choices[0].message.reasoning_content // empty' 2>/dev/null)
 if [ -n "$content" ] && [ "$content" != "null" ]; then
     echo -e "${GREEN}✓ Direct router access successful${NC}"
+    PASS=$((PASS + 1))
 else
     echo -e "${RED}✗ Direct router access failed${NC}"
+    FAIL=$((FAIL + 1))
     echo "Response: $response"
 fi
 
@@ -251,22 +313,26 @@ response=$(curl -s -X POST "$BASE_URL/primary/v1/chat/completions" \
 content=$(echo "$response" | jq -r '.choices[0].message.content // .choices[0].message.reasoning_content // empty' 2>/dev/null)
 if [ -n "$content" ] && [ "$content" != "null" ]; then
     echo -e "${GREEN}✓ Direct primary access successful${NC}"
+    PASS=$((PASS + 1))
 else
     echo -e "${RED}✗ Direct primary access failed${NC}"
+    FAIL=$((FAIL + 1))
     echo "Response: $response"
 fi
 
 echo ""
 
 # Test Traefik dashboard
-echo "9. Testing Traefik dashboard..."
+echo "10. Testing Traefik dashboard..."
 echo ""
 
 if curl -s "http://localhost:8080/api/overview" | jq . > /dev/null 2>&1; then
     echo -e "${GREEN}✓ Traefik dashboard accessible${NC}"
+    PASS=$((PASS + 1))
     echo "Visit: http://localhost:8080"
 else
     echo -e "${YELLOW}⚠ Traefik dashboard not accessible${NC}"
+    WARN=$((WARN + 1))
 fi
 
 echo ""
@@ -276,12 +342,26 @@ echo "==================================="
 echo "Test Summary"
 echo "==================================="
 echo ""
-echo "All critical endpoints tested."
+echo -e "  ${GREEN}Passed:  $PASS${NC}"
+echo -e "  ${RED}Failed:  $FAIL${NC}"
+echo -e "  ${YELLOW}Warnings: $WARN${NC}"
+echo ""
+
+if [ "$FAIL" -gt 0 ]; then
+    echo -e "${RED}Some tests failed!${NC}"
+else
+    echo -e "${GREEN}All tests passed!${NC}"
+fi
+
+echo ""
+echo "Routing categories tested:"
+echo "  • SIMPLE   → Mini 4B (router model)"
+echo "  • MODERATE → Nano 30B (primary model)"
+echo "  • COMPLEX  → xAI Grok (external API)"
+echo "  • ENRICH   → xAI context → Nano 30B (enrichment pipeline)"
 echo ""
 echo "Next steps:"
 echo "  • View logs: docker compose logs -f"
-echo "  • Monitor GPU: nvidia-smi"
+echo "  • Run benchmarks: make benchmark"
 echo "  • Traefik dashboard: http://localhost:8080"
-echo ""
-echo "For more tests, use: make test-router or make test-primary"
 echo ""
