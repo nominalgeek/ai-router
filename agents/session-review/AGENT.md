@@ -20,7 +20,13 @@ Classification is done by a small router model (Nemotron Orchestrator 8B) respon
 
 Review session logs in `logs/sessions/` and produce a structured report. You may also directly edit prompt templates if you identify clear improvements.
 
-### Step 1: Load and Analyze Session Logs
+### Step 1: Load and Analyze Logs
+
+#### Application log
+
+The Flask application writes a rotating log to `logs/app.log`. This contains timestamped INFO/WARNING/ERROR messages from the routing pipeline — classification decisions, max_tokens adjustments, enrichment pipeline events, errors, and startup diagnostics. Read this file first to get an overview of recent activity, then cross-reference specific entries with the session JSONs below.
+
+#### Session logs
 
 Session logs are JSON files in `logs/sessions/`, one per request. Each contains:
 

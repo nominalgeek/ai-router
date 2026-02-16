@@ -68,6 +68,7 @@ services:
 
   router:
     image: vllm/vllm-openai:latest
+    shm_size: '8gb'
     container_name: vllm-router
     restart: unless-stopped
     runtime: nvidia
@@ -79,10 +80,10 @@ services:
       --model cyankiwi/Nemotron-Orchestrator-8B-AWQ-4bit
       --dtype half
       --kv-cache-dtype fp8_e4m3
+      --calculate-kv-scales
       --gpu-memory-utilization 0.14
       --max-model-len 2048
-      --port 8001
-      --enforce-eager
+      --port 8001      
       --trust-remote-code
       --enable-prefix-caching
       --disable-log-stats
@@ -116,6 +117,7 @@ services:
 
   primary:
     image: vllm/vllm-openai:latest
+    shm_size: '8gb'
     container_name: vllm-primary
     restart: unless-stopped
     runtime: nvidia
@@ -127,13 +129,12 @@ services:
       - HF_TOKEN=${HF_TOKEN}
     command: >
       --model unsloth/NVIDIA-Nemotron-3-Nano-30B-A3B-NVFP4
-      --dtype bfloat16
-      --kv-cache-dtype fp8_e4m3
+      --kv-cache-dtype fp8
       --gpu-memory-utilization 0.65
       --max-model-len 32768
+      --max-num-seqs 8
       --disable-log-stats
       --port 8000
-      --enforce-eager
       --trust-remote-code
       --reasoning-parser-plugin /app/nano_v3_reasoning_parser.py
       --reasoning-parser nano_v3

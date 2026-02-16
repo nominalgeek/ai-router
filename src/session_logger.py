@@ -7,13 +7,13 @@ import uuid
 import time
 import glob as globmod
 
-from src.config import logger, now
+from src.config import logger, now, LOG_DIR
 
-# Session logging configuration
-LOG_DIR = os.getenv('LOG_DIR', '/var/log/ai-router/sessions')
+# Session logging configuration — session JSONs go in a subdirectory of LOG_DIR
+SESSIONS_DIR = os.path.join(LOG_DIR, 'sessions')
 LOG_MAX_AGE_DAYS = int(os.getenv('LOG_MAX_AGE_DAYS', '7'))
 LOG_MAX_COUNT = int(os.getenv('LOG_MAX_COUNT', '5000'))
-os.makedirs(LOG_DIR, exist_ok=True)
+os.makedirs(SESSIONS_DIR, exist_ok=True)
 
 
 class SessionLogger:
@@ -92,7 +92,7 @@ class SessionLogger:
         self.data['total_ms'] = round((time.time() - self.start_time) * 1000)
         ts = self.timestamp.strftime('%Y-%m-%d_%H-%M-%S')
         filename = f"{ts}_{self.id}.json"
-        filepath = os.path.join(LOG_DIR, filename)
+        filepath = os.path.join(SESSIONS_DIR, filename)
         try:
             with open(filepath, 'w') as f:
                 json.dump(self.data, f, indent=2, default=str)
@@ -103,7 +103,7 @@ class SessionLogger:
     def _cleanup(self):
         """Remove old session files if over age or count limits."""
         try:
-            files = sorted(globmod.glob(os.path.join(LOG_DIR, '*.json')))
+            files = sorted(globmod.glob(os.path.join(SESSIONS_DIR, '*.json')))
             # Remove files exceeding count limit (oldest first)
             if len(files) > LOG_MAX_COUNT:
                 for f in files[:len(files) - LOG_MAX_COUNT]:

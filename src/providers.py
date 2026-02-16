@@ -12,7 +12,7 @@ from src.config import (
     ROUTER_URL, PRIMARY_URL,
     XAI_API_KEY, XAI_API_URL, XAI_MODEL,
     ROUTER_MODEL, PRIMARY_MODEL,
-    PRIMARY_SYSTEM_PROMPT,
+    PRIMARY_SYSTEM_PROMPT, XAI_SYSTEM_PROMPT,
     ROUTING_SYSTEM_PROMPT, ROUTING_PROMPT,
     ENRICHMENT_SYSTEM_PROMPT,
     XAI_SEARCH_TOOLS,
@@ -308,11 +308,13 @@ def forward_request(target_url: str, path: str, data: Dict[Any, Any], route: str
         url = f"{target_url}{path}"
         logger.info(f"Forwarding request to {url}")
 
-        # Inject temporal context + primary system prompt into the first
-        # system message, or prepend one.  The behavioral instruction (e.g.
-        # "don't echo the date") lives in config/prompts/primary/system.md.
+        # Inject temporal context + route-specific system prompt into the
+        # first system message, or prepend one.  Each route has its own
+        # behavioral prompt: primary gets conciseness + reasoning guidance,
+        # xAI gets conciseness tuned for a cloud model.
         if 'messages' in data:
-            context_line = f"{date_context()}\n{PRIMARY_SYSTEM_PROMPT}"
+            system_prompt = XAI_SYSTEM_PROMPT if route == 'xai' else PRIMARY_SYSTEM_PROMPT
+            context_line = f"{date_context()}\n{system_prompt}"
             first_system = next((m for m in data['messages'] if m.get('role') == 'system'), None)
             if first_system:
                 first_system['content'] = f"{context_line}\n\n{first_system['content']}"

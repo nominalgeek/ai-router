@@ -198,19 +198,7 @@ benchmark: ## Run benchmark suite
 	./Benchmark
 
 review: ## Run session-review agent on accumulated logs
-	@if [ ! -d logs/sessions ] || [ -z "$$(ls logs/sessions/*.json 2>/dev/null)" ]; then \
-		echo "No session logs found in logs/sessions/. Run some traffic first."; \
-		exit 1; \
-	fi
-	@echo "Starting session review agent..."
-	@echo "Session logs: $$(ls logs/sessions/*.json | wc -l) files"
-	cat agents/session-review/AGENT.md | claude --print --verbose \
-		--allowedTools "Read" \
-		--allowedTools "Glob" \
-		--allowedTools "Grep" \
-		--allowedTools "Write(logs/reviews/*)" \
-		--allowedTools "Edit(config/prompts/**)" \
-		--allowedTools "Bash(mkdir -p logs/reviews)"
+	$(PYTHON) agents/session-review/run.py
 
 test-router: ## Test router model with sample request
 	curl -X POST http://localhost/router/v1/chat/completions \

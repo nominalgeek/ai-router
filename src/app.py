@@ -11,7 +11,7 @@ from src.config import (
     VIRTUAL_MODEL,
     ENRICHMENT_INJECTION_PROMPT,
     META_SYSTEM_PROMPT,
-    ENRICH_MIN_MAX_TOKENS,
+    XAI_MIN_MAX_TOKENS,
 )
 from src.session_logger import SessionLogger
 from src.providers import (
@@ -109,15 +109,11 @@ def chat_completions():
             else:
                 logger.warning("Enrichment context unavailable, forwarding to primary model without context")
 
-            # Enrichment injects ~500-800 tokens of context into the system
-            # prompt.  With a reasoning model, a low client max_tokens means
-            # chain-of-thought consumes the entire budget before producing
-            # visible output (content=null).  Enforce a floor so there's
-            # always room for both reasoning and the answer.
-            client_max = data.get('max_tokens') or 0
-            if client_max < ENRICH_MIN_MAX_TOKENS:
-                logger.info(f"Enrich route: raising max_tokens from {client_max} to {ENRICH_MIN_MAX_TOKENS}")
-                data['max_tokens'] = ENRICH_MIN_MAX_TOKENS
+            # Enrich hits the primary (reasoning) model — strip max_tokens
+            # so the model generates until its natural stop token.
+            if 'max_tokens' in data:
+                logger.info(f"Enrich route: removing client max_tokens ({data['max_tokens']})")
+                del data['max_tokens']
 
             data['_route'] = 'enrich'
             result = forward_request(PRIMARY_URL, '/v1/chat/completions', data, 'primary', session=session)
@@ -129,12 +125,34 @@ def chat_completions():
         if route == 'meta':
             logger.info("Entering meta pipeline")
             data['messages'].insert(0, {"role": "system", "content": META_SYSTEM_PROMPT})
+
+            # Meta hits the primary (reasoning) model — strip max_tokens.
+            if 'max_tokens' in data:
+                logger.info(f"Meta route: removing client max_tokens ({data['max_tokens']})")
+                del data['max_tokens']
+
             data['_route'] = 'meta'
             result = forward_request(PRIMARY_URL, '/v1/chat/completions', data, 'primary', session=session)
             session.save()
             return result
 
         target_url = get_model_url(route)
+
+        # Token handling per route:
+        # - Primary (reasoning model): strip max_tokens entirely.  Let the
+        #   model generate until its natural stop token.  vLLM's
+        #   --max-model-len (32K) is the hard cap.
+        # - xAI (cloud API): enforce a floor so Open WebUI's low defaults
+        #   (100-300) don't truncate substantive answers.
+        if route == 'primary':
+            if 'max_tokens' in data:
+                logger.info(f"Primary route: removing client max_tokens ({data['max_tokens']})")
+                del data['max_tokens']
+        elif route == 'xai':
+            client_max = data.get('max_tokens') or 0
+            if client_max < XAI_MIN_MAX_TOKENS:
+                logger.info(f"xAI route: raising max_tokens from {client_max} to {XAI_MIN_MAX_TOKENS}")
+                data['max_tokens'] = XAI_MIN_MAX_TOKENS
 
         # Add routing metadata to response
         # (Note: This modifies the request, which the model will ignore)

@@ -2,15 +2,28 @@
 
 import os
 import logging
+from logging.handlers import RotatingFileHandler
 from datetime import datetime
 from zoneinfo import ZoneInfo
 
-# Configure logging
-logging.basicConfig(
-    level=logging.INFO,
-    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
-)
+# Configure logging — writes to both stdout and a rotating file.
+# The file lives under LOG_DIR (default /var/log/ai-router/) so the
+# session-review agent can read application logs alongside session JSONs.
+LOG_DIR = os.getenv('LOG_DIR', '/var/log/ai-router')
+LOG_FORMAT = '%(asctime)s - %(name)s - %(levelname)s - %(message)s'
+
+logging.basicConfig(level=logging.INFO, format=LOG_FORMAT)
 logger = logging.getLogger('ai_router')
+
+# Rotating file handler: 5 MB per file, keep 3 backups (≈20 MB max)
+os.makedirs(LOG_DIR, exist_ok=True)
+_file_handler = RotatingFileHandler(
+    os.path.join(LOG_DIR, 'app.log'),
+    maxBytes=5 * 1024 * 1024,
+    backupCount=3,
+)
+_file_handler.setFormatter(logging.Formatter(LOG_FORMAT))
+logger.addHandler(_file_handler)
 
 # Model endpoints
 ROUTER_URL = os.getenv('ROUTER_URL', 'http://router:8001')
@@ -39,12 +52,18 @@ CLASSIFY_CONTEXT_BUDGET = int(os.getenv('CLASSIFY_CONTEXT_BUDGET', '2000'))
 # classification word.  Increase if swapping to a more verbose reasoning model.
 CLASSIFY_MAX_TOKENS = int(os.getenv('CLASSIFY_MAX_TOKENS', '512'))
 
-# Minimum max_tokens for enrichment route responses.  The enrich pipeline
-# injects ~500-800 tokens of retrieved context into the system prompt, which
-# eats into the generation budget.  With a reasoning model, low max_tokens
-# means all output goes to chain-of-thought with nothing left for the actual
-# answer (content=null).  This floor ensures enough room for both.
-ENRICH_MIN_MAX_TOKENS = int(os.getenv('ENRICH_MIN_MAX_TOKENS', '1024'))
+# Client max_tokens handling strategy:
+#
+# PRIMARY (local reasoning model): Strip max_tokens entirely.  The Nano 30B
+# is a reasoning model that burns thousands of tokens on <think> blocks
+# before producing visible content.  Any client-supplied cap risks cutting
+# off reasoning mid-stream, resulting in content=null.  vLLM's
+# --max-model-len (32K) is the only limit needed — the model stops when
+# it emits its natural end token.
+#
+# XAI (cloud API): Keep a floor.  We pay per token, but the client's
+# default (often 100-300 from Open WebUI) truncates substantive answers.
+XAI_MIN_MAX_TOKENS = int(os.getenv('XAI_MIN_MAX_TOKENS', '16384'))
 
 # Timezone configuration (defaults to US Pacific / Happy Valley, OR)
 LOCAL_TZ = ZoneInfo(os.getenv('TZ', 'America/Los_Angeles'))
@@ -113,6 +132,7 @@ PRIMARY_SYSTEM_PROMPT_PATH = os.getenv('PRIMARY_SYSTEM_PROMPT_PATH', '/app/confi
 ENRICHMENT_SYSTEM_PROMPT_PATH = os.getenv('ENRICHMENT_SYSTEM_PROMPT_PATH', '/app/config/prompts/enrichment/system.md')
 ENRICHMENT_INJECTION_PROMPT_PATH = os.getenv('ENRICHMENT_INJECTION_PROMPT_PATH', '/app/config/prompts/enrichment/injection.md')
 META_SYSTEM_PROMPT_PATH = os.getenv('META_SYSTEM_PROMPT_PATH', '/app/config/prompts/meta/system.md')
+XAI_SYSTEM_PROMPT_PATH = os.getenv('XAI_SYSTEM_PROMPT_PATH', '/app/config/prompts/xai/system.md')
 
 
 def load_prompt_file(path, fallback, label):
@@ -178,4 +198,10 @@ META_SYSTEM_PROMPT = load_prompt_file(
     META_SYSTEM_PROMPT_PATH,
     'You are processing a structured task about a prior conversation. Follow the task instructions exactly. Be concise.',
     'meta system prompt'
+)
+
+XAI_SYSTEM_PROMPT = load_prompt_file(
+    XAI_SYSTEM_PROMPT_PATH,
+    'Be direct and concise. Lead with the answer, then provide supporting detail only if it adds clear value.',
+    'xai system prompt'
 )

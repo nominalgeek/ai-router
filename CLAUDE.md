@@ -80,8 +80,10 @@ config/prompts/
   routing/
     system.md                   # Classification system prompt for Orchestrator 8B
     request.md                  # Classification request template
+  xai/
+    system.md                   # xAI system prompt (COMPLEX route — conciseness guidance)
   enrichment/
-    system.md                   # Enrichment system prompt (sent to xAI)
+    system.md                   # Enrichment system prompt (sent to xAI for context retrieval)
     injection.md                # Context injection template (prepended for primary)
   meta/
     system.md                   # Meta pipeline system prompt
@@ -119,7 +121,8 @@ This is an exploratory project — architecture decisions are working hypotheses
 - **Session logs as the observability layer.** Every routed request writes a full-lifecycle JSON file. This is the primary way to understand what the system did and why. No metrics, no dashboards — just inspectable files.
 - **OpenAI-compatible API as the only interface.** Any client that speaks the OpenAI chat format works transparently. The routing is invisible to the caller. The `/v1/models` endpoint presents a single virtual model (`ai-router` by default, configurable via `VIRTUAL_MODEL` env var) — external consumers like Open WebUI see one model and never know about the backend split.
 - **`/stats` endpoint is a labeled placeholder.** It exists in the route table but returns a stub message. It does not pretend to have data.
-- **Client inference parameters are passed through (for now).** `forward_request()` currently forwards client-supplied parameters (`temperature`, `top_p`, `max_tokens`, etc.) directly to backends. This means Open WebUI's UI sliders influence generation. Future work: define per-route parameter profiles internally so the router fully owns inference behavior and client settings are ignored or bounded.
+- **The router owns `max_tokens`, not the client.** For the primary model (a reasoning model that burns tokens on `<think>` blocks), `max_tokens` is stripped from client requests entirely — the model generates until its natural stop token, bounded only by vLLM's `--max-model-len` (32K). For xAI, a floor (`XAI_MIN_MAX_TOKENS`, default 16K) prevents Open WebUI's low defaults from truncating answers. Other inference parameters (`temperature`, `top_p`, etc.) are still passed through from the client.
+- **Route-specific system prompts.** Each route gets its own behavioral prompt: `config/prompts/primary/system.md` for local model routes, `config/prompts/xai/system.md` for the COMPLEX route. Both emphasize conciseness. The primary prompt also includes reasoning guidance to keep `<think>` blocks focused. The enrichment and meta pipelines have their own prompts as before.
 
 ## Development
 
