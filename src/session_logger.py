@@ -1,6 +1,5 @@
 """Session-based request logging — one JSON file per request lifecycle."""
 
-import copy
 import os
 import json
 import uuid
@@ -19,6 +18,14 @@ os.makedirs(SESSIONS_DIR, exist_ok=True)
 class SessionLogger:
     """Captures the full lifecycle of a single request as a JSON session file."""
 
+    # Cleanup runs periodically instead of every save() call.
+    # At low file counts cleanup is <1ms, but glob + sort over 5,000 files
+    # will become measurable — this keeps it off the hot path.
+    _save_count = 0
+    _last_cleanup = time.time()
+    CLEANUP_INTERVAL = 100   # run cleanup every N saves
+    CLEANUP_PERIOD = 60      # ... or every N seconds, whichever comes first
+
     def __init__(self):
         self.id = uuid.uuid4().hex[:8]
         self.start_time = time.time()
@@ -36,11 +43,17 @@ class SessionLogger:
             'error': None,
         }
         self._step_start = None
+        self._messages_json = None  # pre-serialized client messages (set by set_query)
 
     def set_query(self, messages):
-        """Store the full original messages and extract the last user message as the query."""
+        """Snapshot the original messages as a JSON string (avoids deep copy).
+
+        We need JSON for the log file anyway, so serializing once here is
+        cheaper than copy.deepcopy() — especially for long multi-turn
+        conversations with reasoning blocks.
+        """
         if messages:
-            self.data['client_messages'] = copy.deepcopy(messages)
+            self._messages_json = json.dumps(messages, default=str)
             for msg in reversed(messages):
                 if msg.get('role') == 'user':
                     content = msg.get('content', '')
@@ -94,12 +107,34 @@ class SessionLogger:
         ts = self.timestamp.strftime('%Y-%m-%d_%H-%M-%S')
         filename = f"{ts}_{self.id}.json"
         filepath = os.path.join(SESSIONS_DIR, filename)
+
+        write_start = time.time()
         try:
+            # Embed the pre-serialized client_messages JSON string directly
+            # so we don't re-serialize the (potentially large) conversation.
+            if self._messages_json:
+                self.data['client_messages'] = '__MESSAGES_PLACEHOLDER__'
             with open(filepath, 'w') as f:
-                json.dump(self.data, f, indent=2, default=str)
+                raw = json.dumps(self.data, indent=2, default=str)
+                if self._messages_json:
+                    raw = raw.replace('"__MESSAGES_PLACEHOLDER__"', self._messages_json)
+                f.write(raw)
         except Exception as e:
             logger.error(f"Failed to write session log: {e}")
-        self._cleanup()
+        write_ms = (time.time() - write_start) * 1000
+
+        # Run cleanup periodically, not every request
+        cleanup_ms = 0
+        SessionLogger._save_count += 1
+        if (SessionLogger._save_count >= SessionLogger.CLEANUP_INTERVAL
+                or time.time() - SessionLogger._last_cleanup > SessionLogger.CLEANUP_PERIOD):
+            cleanup_start = time.time()
+            self._cleanup()
+            cleanup_ms = (time.time() - cleanup_start) * 1000
+            SessionLogger._save_count = 0
+            SessionLogger._last_cleanup = time.time()
+
+        logger.info(f"Session saved: {self.id} write_ms={write_ms:.0f} cleanup_ms={cleanup_ms:.0f}")
 
     def _cleanup(self):
         """Remove old session files if over age or count limits."""

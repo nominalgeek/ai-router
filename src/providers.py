@@ -21,7 +21,7 @@ from src.config import (
 from src.session_logger import SessionLogger
 
 
-def determine_route(messages: list, session: SessionLogger = None) -> str:
+def determine_route(messages: list, session: SessionLogger = None, date_ctx: str = None) -> str:
     """
     Use Orchestrator 8B to determine routing via prompt-based classification.
     Routes to: 'primary' (local Nano 30B), 'xai' (xAI API), or 'enrich' (xAI context → primary).
@@ -117,7 +117,7 @@ def determine_route(messages: list, session: SessionLogger = None) -> str:
     routing_prompt = context_prefix + ROUTING_PROMPT.format(query=last_message)
 
     classify_messages = [
-        {"role": "system", "content": f"{date_context()}\n\n{ROUTING_SYSTEM_PROMPT}"},
+        {"role": "system", "content": f"{date_ctx or date_context()}\n\n{ROUTING_SYSTEM_PROMPT}"},
         {"role": "user", "content": routing_prompt}
     ]
     classify_params = {"temperature": 0.0}
@@ -164,19 +164,17 @@ def determine_route(messages: list, session: SessionLogger = None) -> str:
 
         route = 'primary'  # default
         if 'ENRICH' in decision:
-            logger.info("Routing to enrichment pipeline: prompt-based classification (ENRICH)")
             route = 'enrich'
         elif 'SIMPLE' in decision:
-            logger.info("Routing to primary model: prompt-based classification (SIMPLE)")
             route = 'primary'
         elif 'MODERATE' in decision:
-            logger.info("Routing to primary model: prompt-based classification (MODERATE)")
             route = 'primary'
         elif 'COMPLEX' in decision:
-            logger.info("Routing to xAI model: prompt-based classification (COMPLEX)")
             route = 'xai'
         else:
             logger.warning(f"Routing classification unclear: '{decision}', defaulting to primary")
+
+        logger.info(f"Classification completed: {decision} -> {route} in {classify_ms:.0f}ms (finish_reason={finish_reason})")
 
         if session:
             session.end_step(status=response.status_code, response_content=raw, finish_reason=finish_reason)
@@ -199,6 +197,49 @@ def determine_route(messages: list, session: SessionLogger = None) -> str:
         return 'primary'
 
 
+def start_speculative_primary(data: dict, date_ctx: str, is_stream: bool):
+    """Fire a speculative primary model request (runs in parallel with classification).
+
+    Prepares an independent copy of the request data with system prompt and
+    model set for the primary backend, then sends it.  The caller must close
+    the returned response if the route turns out to be non-primary.
+
+    Returns:
+        (requests.Response, float) — the HTTP response and request start time,
+        or (None, 0) if the request fails to start.
+    """
+    start = time.time()
+    try:
+        # Independent copy so we don't mutate the caller's data.
+        # Shallow-copy each message dict so system prompt injection
+        # doesn't affect the original messages list.
+        spec_data = dict(data)
+        spec_data['messages'] = [dict(m) for m in data['messages']]
+        spec_data.pop('max_tokens', None)
+        spec_data.pop('_route', None)
+        spec_data['model'] = PRIMARY_MODEL
+
+        # Inject temporal context + primary system prompt (mirrors forward_request)
+        context_line = f"{date_ctx}\n{PRIMARY_SYSTEM_PROMPT}"
+        first_system = next((m for m in spec_data['messages'] if m.get('role') == 'system'), None)
+        if first_system:
+            first_system['content'] = f"{context_line}\n\n{first_system['content']}"
+        else:
+            spec_data['messages'].insert(0, {"role": "system", "content": context_line})
+
+        response = requests.post(
+            f"{PRIMARY_URL}/v1/chat/completions",
+            json=spec_data,
+            headers={'Content-Type': 'application/json'},
+            stream=is_stream,
+            timeout=300,
+        )
+        return response, start
+    except Exception as e:
+        logger.warning(f"Speculative primary failed to start: {e}")
+        return None, 0
+
+
 def _build_search_tools() -> list:
     """Build the tools list from the XAI_SEARCH_TOOLS config."""
     if not XAI_SEARCH_TOOLS:
@@ -206,7 +247,7 @@ def _build_search_tools() -> list:
     return [{"type": t.strip()} for t in XAI_SEARCH_TOOLS.split(',') if t.strip()]
 
 
-def fetch_enrichment_context(messages: list, session: SessionLogger = None) -> Optional[str]:
+def fetch_enrichment_context(messages: list, session: SessionLogger = None, date_ctx: str = None) -> Optional[str]:
     """
     Call xAI /v1/responses to retrieve current/real-time context for the user's query.
     Uses web_search and x_search tools when configured via XAI_SEARCH_TOOLS.
@@ -215,7 +256,7 @@ def fetch_enrichment_context(messages: list, session: SessionLogger = None) -> O
     # Pass full conversation history so Grok can resolve references
     # (e.g. "that school") via the prior turns.
     enrich_input = [
-        {"role": "system", "content": f"{date_context()}\n\n{ENRICHMENT_SYSTEM_PROMPT}"},
+        {"role": "system", "content": f"{date_ctx or date_context()}\n\n{ENRICHMENT_SYSTEM_PROMPT}"},
     ]
     for m in messages:
         role = m.get('role', 'user')
@@ -239,6 +280,7 @@ def fetch_enrichment_context(messages: list, session: SessionLogger = None) -> O
                            messages=enrich_input,
                            params={k: v for k, v in request_body.items() if k != 'input'})
 
+    enrich_start = time.time()
     try:
         response = requests.post(
             enrich_url,
@@ -249,6 +291,8 @@ def fetch_enrichment_context(messages: list, session: SessionLogger = None) -> O
             },
             timeout=60
         )
+
+        enrich_ms = (time.time() - enrich_start) * 1000
 
         if response.status_code == 200:
             result = response.json()
@@ -261,23 +305,25 @@ def fetch_enrichment_context(messages: list, session: SessionLogger = None) -> O
                             context += block.get('text', '')
             context = context.strip()
             if context:
-                logger.info(f"Enrichment context retrieved ({len(context)} chars)")
+                logger.info(f"Enrichment context retrieved: {len(context)} chars in {enrich_ms:.0f}ms")
                 if session:
                     session.end_step(status=200, response_content=context)
                 return context
 
-        logger.warning(f"Enrichment call returned status {response.status_code}")
+        logger.warning(f"Enrichment call failed: status={response.status_code} in {enrich_ms:.0f}ms")
         if session:
             session.end_step(status=response.status_code, error=f'status {response.status_code}')
         return None
 
     except requests.exceptions.Timeout:
-        logger.warning("Enrichment context fetch timed out")
+        enrich_ms = (time.time() - enrich_start) * 1000
+        logger.warning(f"Enrichment context fetch timed out after {enrich_ms:.0f}ms")
         if session:
             session.end_step(error='timeout')
         return None
     except Exception as e:
-        logger.error(f"Error fetching enrichment context: {str(e)}")
+        enrich_ms = (time.time() - enrich_start) * 1000
+        logger.error(f"Error fetching enrichment context: {str(e)} after {enrich_ms:.0f}ms")
         if session:
             session.end_step(error=str(e))
         return None
@@ -291,7 +337,7 @@ def get_model_url(route: str) -> str:
         return PRIMARY_URL
 
 
-def forward_request(target_url: str, path: str, data: Dict[Any, Any], route: str = None, session: SessionLogger = None) -> Response:
+def forward_request(target_url: str, path: str, data: Dict[Any, Any], route: str = None, session: SessionLogger = None, date_ctx: str = None) -> Response:
     """
     Forward request to target model with proper error handling.
 
@@ -315,7 +361,7 @@ def forward_request(target_url: str, path: str, data: Dict[Any, Any], route: str
         # xAI gets conciseness tuned for a cloud model.
         if 'messages' in data:
             system_prompt = XAI_SYSTEM_PROMPT if route == 'xai' else PRIMARY_SYSTEM_PROMPT
-            context_line = f"{date_context()}\n{system_prompt}"
+            context_line = f"{date_ctx or date_context()}\n{system_prompt}"
             first_system = next((m for m in data['messages'] if m.get('role') == 'system'), None)
             if first_system:
                 first_system['content'] = f"{context_line}\n\n{first_system['content']}"
@@ -341,6 +387,7 @@ def forward_request(target_url: str, path: str, data: Dict[Any, Any], route: str
                                messages=data.get('messages'), params=log_params)
 
         # Forward the request
+        forward_start = time.time()
         response = requests.post(
             url,
             json=data,
@@ -350,17 +397,36 @@ def forward_request(target_url: str, path: str, data: Dict[Any, Any], route: str
         )
 
         if is_stream:
+            forward_ms = (time.time() - forward_start) * 1000
             if session:
                 session.end_step(status=response.status_code, response_content='[streamed]')
-            # Stream SSE chunks back to the client
+
+            # Wrap the SSE iterator to log TTFT (time from request start
+            # to first data chunk reaching the client) without buffering.
+            def _stream_with_ttft(raw_iter, route_name, start_time, connect_ms):
+                first_chunk = True
+                for chunk in raw_iter:
+                    if first_chunk:
+                        ttft_ms = (time.time() - start_time) * 1000
+                        logger.info(
+                            f"Provider response: {route_name} status={response.status_code}"
+                            f" connect_ms={connect_ms:.0f} ttft_ms={ttft_ms:.0f} stream=true"
+                        )
+                        first_chunk = False
+                    yield chunk
+
             return Response(
-                response.iter_content(chunk_size=None),
+                _stream_with_ttft(response.iter_content(chunk_size=None),
+                                  route or 'primary', forward_start, forward_ms),
                 status=response.status_code,
                 content_type='text/event-stream'
             )
 
+        forward_ms = (time.time() - forward_start) * 1000
+
         # Capture response content for logging
         response_body = response.content
+        finish_reason = None
         if session:
             try:
                 resp_json = json.loads(response_body)
@@ -374,6 +440,8 @@ def forward_request(target_url: str, path: str, data: Dict[Any, Any], route: str
                 session.end_step(status=response.status_code, response_content=resp_text or response_body.decode('utf-8', errors='replace'), finish_reason=finish_reason)
             except (json.JSONDecodeError, IndexError, KeyError):
                 session.end_step(status=response.status_code, response_content=response_body.decode('utf-8', errors='replace'))
+
+        logger.info(f"Provider response: {route or 'primary'} status={response.status_code} duration_ms={forward_ms:.0f} finish_reason={finish_reason} stream=false")
 
         # Return buffered response with same status code
         return Response(
