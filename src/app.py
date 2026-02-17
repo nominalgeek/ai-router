@@ -222,6 +222,124 @@ def _handle_speculative_primary(spec_response, spec_start, data, is_stream, sess
     )
 
 
+def _handle_primary(data, is_stream, session, date_ctx, spec_response, spec_start):
+    """Handle primary route: use speculative response or fall back to normal forwarding.
+
+    The speculative request was fired in parallel with classification.  If it
+    succeeded (status 2xx), we reuse it directly — saving the full classification
+    latency.  Otherwise we close it and forward normally.
+    """
+    if 'max_tokens' in data:
+        logger.info(f"Primary route: removing client max_tokens ({data['max_tokens']})")
+
+    if spec_response is not None and spec_response.ok:
+        return _handle_speculative_primary(
+            spec_response, spec_start, data, is_stream, session
+        )
+
+    # Speculative request failed — fall back to normal forwarding
+    if spec_response is not None:
+        logger.warning(f"Speculative primary status {spec_response.status_code}, falling back")
+        spec_response.close()
+    else:
+        logger.warning("Speculative primary failed, falling back")
+
+    if 'max_tokens' in data:
+        del data['max_tokens']
+    data['_route'] = 'primary'
+    result = forward_request(PRIMARY_URL, '/v1/chat/completions', data, 'primary',
+                             session=session, date_ctx=date_ctx)
+    _log_request_summary(session)
+    session.save()
+    return result
+
+
+def _handle_enrich(data, session, date_ctx):
+    """Handle enrichment pipeline: fetch context from xAI, then forward to primary.
+
+    Two-hop pipeline — xAI retrieves real-time context, which is injected into the
+    conversation before the primary model generates the final response.
+    """
+    logger.info("Entering enrichment pipeline")
+    context = fetch_enrichment_context(data['messages'], session=session, date_ctx=date_ctx)
+
+    if context:
+        injection = ENRICHMENT_INJECTION_PROMPT.format(
+            context=context,
+            date=date_ctx
+        )
+        # Append enrichment context to an existing system message,
+        # or insert one before the last user message
+        first_system = next((m for m in data['messages'] if m.get('role') == 'system'), None)
+        if first_system:
+            first_system['content'] = f"{first_system['content']}\n\n{injection}"
+        else:
+            insert_pos = len(data['messages']) - 1
+            data['messages'].insert(insert_pos, {
+                "role": "system",
+                "content": injection
+            })
+        logger.info("Enrichment context injected, forwarding to primary model")
+    else:
+        logger.warning("Enrichment context unavailable, forwarding to primary model without context")
+
+    # Enrich hits the primary (reasoning) model — strip max_tokens
+    # so the model generates until its natural stop token.
+    if 'max_tokens' in data:
+        logger.info(f"Enrich route: removing client max_tokens ({data['max_tokens']})")
+        del data['max_tokens']
+
+    data['_route'] = 'enrich'
+    result = forward_request(PRIMARY_URL, '/v1/chat/completions', data, 'primary',
+                             session=session, date_ctx=date_ctx)
+    _log_request_summary(session)
+    session.save()
+    return result
+
+
+def _handle_meta(data, session, date_ctx):
+    """Handle meta pipeline: client-generated meta-prompts (titles, follow-ups, summaries).
+
+    These are self-contained prompts from clients like Open WebUI that embed their
+    own conversation history.  They skip classification and go straight to primary.
+    """
+    logger.info("Entering meta pipeline")
+    data['messages'].insert(0, {"role": "system", "content": META_SYSTEM_PROMPT})
+
+    # Meta hits the primary (reasoning) model — strip max_tokens.
+    if 'max_tokens' in data:
+        logger.info(f"Meta route: removing client max_tokens ({data['max_tokens']})")
+        del data['max_tokens']
+
+    data['_route'] = 'meta'
+    result = forward_request(PRIMARY_URL, '/v1/chat/completions', data, 'primary',
+                             session=session, date_ctx=date_ctx)
+    _log_request_summary(session)
+    session.save()
+    return result
+
+
+def _handle_xai(data, route, session, date_ctx):
+    """Handle xAI route: forward to cloud API with max_tokens floor.
+
+    Enforces XAI_MIN_MAX_TOKENS so Open WebUI's low defaults (100–300) don't
+    truncate substantive answers from the cloud model.
+    """
+    target_url = get_model_url(route)
+
+    client_max = data.get('max_tokens') or 0
+    if client_max < XAI_MIN_MAX_TOKENS:
+        logger.info(f"xAI route: raising max_tokens from {client_max} to {XAI_MIN_MAX_TOKENS}")
+        data['max_tokens'] = XAI_MIN_MAX_TOKENS
+
+    data['_route'] = route
+    result = forward_request(target_url, '/v1/chat/completions', data, route,
+                             session=session, date_ctx=date_ctx)
+    _log_request_summary(session)
+    session.save()
+    return result
+
+
 @app.route('/v1/chat/completions', methods=['POST'])
 def chat_completions():
     """
@@ -273,111 +391,19 @@ def chat_completions():
             spec_response, spec_start = spec_future.result()
 
         # Non-primary routes: cancel the speculative request immediately
-        if route != 'primary':
-            if spec_response is not None:
-                spec_response.close()
-                logger.info(f"Cancelled speculative primary (route={route})")
-                spec_response = None
+        if route != 'primary' and spec_response is not None:
+            spec_response.close()
+            logger.info(f"Cancelled speculative primary (route={route})")
+            spec_response = None
 
-        # --- Primary route: use speculative response if available ---
+        # Dispatch to route handler
         if route == 'primary':
-            if 'max_tokens' in data:
-                logger.info(f"Primary route: removing client max_tokens ({data['max_tokens']})")
-
-            if spec_response is not None and spec_response.ok:
-                return _handle_speculative_primary(
-                    spec_response, spec_start, data, is_stream, session
-                )
-
-            # Speculative request failed — fall back to normal forwarding
-            if spec_response is not None:
-                logger.warning(f"Speculative primary status {spec_response.status_code}, falling back")
-                spec_response.close()
-                spec_response = None
-            else:
-                logger.warning("Speculative primary failed, falling back")
-
-            if 'max_tokens' in data:
-                del data['max_tokens']
-            data['_route'] = 'primary'
-            result = forward_request(PRIMARY_URL, '/v1/chat/completions', data, 'primary',
-                                     session=session, date_ctx=date_ctx)
-            _log_request_summary(session)
-            session.save()
-            return result
-
-        # --- Enrichment pipeline: fetch context from xAI, then forward to primary ---
+            return _handle_primary(data, is_stream, session, date_ctx, spec_response, spec_start)
         if route == 'enrich':
-            logger.info("Entering enrichment pipeline")
-            context = fetch_enrichment_context(data['messages'], session=session, date_ctx=date_ctx)
-
-            if context:
-                injection = ENRICHMENT_INJECTION_PROMPT.format(
-                    context=context,
-                    date=date_ctx
-                )
-                # Append enrichment context to an existing system message,
-                # or insert one before the last user message
-                first_system = next((m for m in data['messages'] if m.get('role') == 'system'), None)
-                if first_system:
-                    first_system['content'] = f"{first_system['content']}\n\n{injection}"
-                else:
-                    insert_pos = len(data['messages']) - 1
-                    data['messages'].insert(insert_pos, {
-                        "role": "system",
-                        "content": injection
-                    })
-                logger.info("Enrichment context injected, forwarding to primary model")
-            else:
-                logger.warning("Enrichment context unavailable, forwarding to primary model without context")
-
-            # Enrich hits the primary (reasoning) model — strip max_tokens
-            # so the model generates until its natural stop token.
-            if 'max_tokens' in data:
-                logger.info(f"Enrich route: removing client max_tokens ({data['max_tokens']})")
-                del data['max_tokens']
-
-            data['_route'] = 'enrich'
-            result = forward_request(PRIMARY_URL, '/v1/chat/completions', data, 'primary',
-                                     session=session, date_ctx=date_ctx)
-            _log_request_summary(session)
-            session.save()
-            return result
-
-        # --- Meta pipeline: client-generated meta-prompts ---
+            return _handle_enrich(data, session, date_ctx)
         if route == 'meta':
-            logger.info("Entering meta pipeline")
-            data['messages'].insert(0, {"role": "system", "content": META_SYSTEM_PROMPT})
-
-            # Meta hits the primary (reasoning) model — strip max_tokens.
-            if 'max_tokens' in data:
-                logger.info(f"Meta route: removing client max_tokens ({data['max_tokens']})")
-                del data['max_tokens']
-
-            data['_route'] = 'meta'
-            result = forward_request(PRIMARY_URL, '/v1/chat/completions', data, 'primary',
-                                     session=session, date_ctx=date_ctx)
-            _log_request_summary(session)
-            session.save()
-            return result
-
-        # --- xAI route ---
-        target_url = get_model_url(route)
-
-        # xAI (cloud API): enforce a floor so Open WebUI's low defaults
-        # (100-300) don't truncate substantive answers.
-        if route == 'xai':
-            client_max = data.get('max_tokens') or 0
-            if client_max < XAI_MIN_MAX_TOKENS:
-                logger.info(f"xAI route: raising max_tokens from {client_max} to {XAI_MIN_MAX_TOKENS}")
-                data['max_tokens'] = XAI_MIN_MAX_TOKENS
-
-        data['_route'] = route
-        result = forward_request(target_url, '/v1/chat/completions', data, route,
-                                 session=session, date_ctx=date_ctx)
-        _log_request_summary(session)
-        session.save()
-        return result
+            return _handle_meta(data, session, date_ctx)
+        return _handle_xai(data, route, session, date_ctx)
 
     except Exception as e:
         if spec_response is not None:
