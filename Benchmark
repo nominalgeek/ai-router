@@ -161,17 +161,22 @@ echo ""
 echo -e "${YELLOW}Primary Model (8K context):${NC}"
 LONG_PROMPT=$(python3 -c "print('The story continues. ' * 500)")
 START=$(date +%s.%N)
+# No max_tokens — matches how the router sends requests to the primary model.
+# The Nano 30B reasoning model uses its token budget for <think> blocks;
+# any artificial cap risks truncating reasoning before content is emitted.
 curl -s -X POST "$BASE_URL/primary/v1/chat/completions" \
   -H "Content-Type: application/json" \
   -d "{
     \"messages\": [{\"role\": \"user\", \"content\": \"${LONG_PROMPT:0:4000} Summarize the above.\"}],
-    \"max_tokens\": 100,
     \"stream\": false
   }" > /tmp/primary_context.json 2>/dev/null
 END=$(date +%s.%N)
 DURATION=$(echo "$END - $START" | bc)
-SUCCESS=$(cat /tmp/primary_context.json | jq -r '.choices[0].message.content' 2>/dev/null | wc -c)
-if [ "$SUCCESS" -gt 10 ]; then
+# Check both content and reasoning_content — the reasoning model may put
+# all output in reasoning_content with content=null.
+CONTENT=$(jq -r '.choices[0].message.content // empty' /tmp/primary_context.json 2>/dev/null)
+REASONING=$(jq -r '.choices[0].message.reasoning_content // empty' /tmp/primary_context.json 2>/dev/null)
+if [ ${#CONTENT} -gt 10 ] || [ ${#REASONING} -gt 10 ]; then
   echo -e "  ${GREEN}✓ Success${NC} (${DURATION}s)"
 else
   echo -e "  ${RED}✗ Failed${NC}"
