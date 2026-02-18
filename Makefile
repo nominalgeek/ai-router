@@ -2,7 +2,8 @@
        logs logs-router logs-primary logs-ai \
        status health models gpu gpu-watch up-watch stats clean clean-all backup restore \
        venv test benchmark test-router test-primary pull update \
-       shell-router shell-primary shell-ai validate network volumes prune review doc-review
+       shell-router shell-primary shell-ai validate network volumes prune review doc-review \
+       boardroom-review
 
 VENV_DIR := .venv
 PYTHON := $(VENV_DIR)/bin/python
@@ -202,6 +203,9 @@ review: ## Run session-review agent on accumulated logs
 
 doc-review: ## Run doc-review agent to check docs against code
 	$(PYTHON) agents/doc-review/run.py
+
+boardroom-review: ## Run Improvement Board cycle (CEO → Challenger → QA)
+	$(PYTHON) agents/boardroom_run.py
 
 test-router: ## Test router model with sample request
 	curl -X POST http://localhost/router/v1/chat/completions \
