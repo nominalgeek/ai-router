@@ -120,9 +120,13 @@ docs/
   architecture.md               # Mermaid architecture diagrams
 agents/
   session-review/
-    AGENT.md                    # Task spec for autonomous session-review agent
+    AGENT.md                    # Task spec for session-review agent (Session CEO in boardroom)
   doc-review/
-    AGENT.md                    # Task spec for documentation-review agent
+    AGENT.md                    # Task spec for doc-review agent (QA Validator in boardroom)
+  challenger/
+    AGENT.md                    # Task spec for adversarial challenger agent
+  boardroom_run.py              # Orchestrator for the Improvement Board cycle
+review-board.yaml               # Improvement Board config (roles, rules, process)
 Test                            # Integration test suite (bash)
 Benchmark                       # Latency, throughput, concurrency benchmarks (bash)
 logs/sessions/                  # Auto-generated per-request JSON session logs
@@ -155,6 +159,30 @@ grep -l '"route": "xai"' logs/sessions/*.json
 ```
 
 Logs auto-rotate: files older than 7 days or exceeding 5000 total are cleaned up automatically. Timestamps use the configured `TZ` timezone (default: `America/Los_Angeles`).
+
+## Improvement Board
+
+A lightweight governance layer over the self-improvement loop. Three agents run in sequence, with separation of powers borrowed from [AgentBoardroom](https://github.com/GixGosu/AgentBoardroom):
+
+| Role | Agent | Job |
+|------|-------|-----|
+| Session CEO | `agents/session-review/` | Analyze session logs, propose prompt improvements |
+| Adversarial Challenger | `agents/challenger/` | Critically evaluate every proposal for weaknesses and regression risk |
+| QA Validator | `agents/doc-review/` | Hard gate — verify consistency and issue PASS/FAIL |
+
+```bash
+make boardroom-review    # Run the full cycle
+```
+
+The pipeline is strictly sequential (CEO → Challenger → QA). No proposal reaches the QA gate without surviving adversarial challenge. Every cycle produces a decision lineage record in `logs/reviews/boardroom/`.
+
+Key rules (defined in `review-board.yaml`):
+- **Mandatory challenge**: every proposal must be adversarially reviewed
+- **No self-approval**: no role may approve its own output
+- **QA gate for edits**: prompt file changes require QA PASS
+- **Single round**: challenged proposals are blocked for this cycle, revisable next run
+
+The standalone agents still work independently: `make review` for session analysis with direct prompt edits, `make doc-review` for documentation accuracy checks.
 
 ## Configuration
 
@@ -201,5 +229,6 @@ Run `make help` to see all available targets. Key ones:
 | `make benchmark` | Run latency/throughput/concurrency benchmarks |
 | `make review` | Run session-review agent on accumulated logs |
 | `make doc-review` | Run doc-review agent to check docs against code |
+| `make boardroom-review` | Run Improvement Board cycle (CEO → Challenger → QA) |
 | `make gpu` | Show GPU status |
 | `make clean-all` | Remove everything including model cache volumes |

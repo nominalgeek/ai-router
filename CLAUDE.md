@@ -94,9 +94,13 @@ docs/
   architecture.md               # Mermaid architecture diagrams
 agents/
   session-review/
-    AGENT.md                    # Task spec for autonomous session-review agent
+    AGENT.md                    # Task spec for session-review agent (Session CEO in boardroom)
   doc-review/
-    AGENT.md                    # Task spec for documentation-review agent
+    AGENT.md                    # Task spec for doc-review agent (QA Validator in boardroom)
+  challenger/
+    AGENT.md                    # Task spec for adversarial challenger agent
+  boardroom_run.py              # Orchestrator for the Improvement Board cycle
+review-board.yaml               # Improvement Board config (roles, rules, decision lineage)
 nano_v3_reasoning_parser.py     # vLLM reasoning parser plugin for Nano 30B (from Unsloth)
 AI_OPERATOR_PROFILE.md          # General AI assistant operating constraints
 requirements.txt                # Python dependencies
