@@ -1,3 +1,6 @@
+# Secrets
+.secrets
+
 # logs
 logs/sessions/*
 

@@ -31,16 +31,19 @@ Exposes an OpenAI-compatible API so any client that speaks the OpenAI format (e.
 
    ```bash
    git clone <repo-url> && cd ai-router
-   cp .env.example .env   # or create .env manually
    ```
 
-   Add your keys to `.env`:
+   Create `.env` for non-sensitive config:
+   ```
+   TZ=America/Los_Angeles                   # timezone, defaults to US Pacific
+   XAI_SEARCH_TOOLS=web_search,x_search     # optional, see below
+   XAI_MODEL=grok-4-1-fast-reasoning        # optional, see below
+   ```
+
+   Create `.secrets` for API keys (gitignored, `chmod 600`):
    ```
    HF_TOKEN=<your-huggingface-token>
    XAI_API_KEY=<your-xai-api-key>           # optional
-   XAI_SEARCH_TOOLS=web_search,x_search     # optional, see below
-   XAI_MODEL=grok-4-1-fast-reasoning        # optional, see below
-   TZ=America/Los_Angeles                   # timezone, defaults to US Pacific
    ```
 
 2. **Start services**
@@ -74,7 +77,7 @@ Exposes an OpenAI-compatible API so any client that speaks the OpenAI format (e.
 | Primary | [unsloth/NVIDIA-Nemotron-3-Nano-30B-A3B-NVFP4](https://huggingface.co/unsloth/NVIDIA-Nemotron-3-Nano-30B-A3B-NVFP4) | NVFP4 quantization by Unsloth |
 | Cloud | Grok (xAI API) | Configurable via `XAI_MODEL` env var |
 
-Available xAI models (set via `XAI_MODEL` in `.env`):
+Available xAI models (set via `XAI_MODEL` in `.env` — non-secret config):
 - `grok-4-1-fast-reasoning` — default, used for COMPLEX and ENRICH routes
 - `grok-4-1-fast-non-reasoning` — faster, no chain-of-thought
 - `grok-code-fast-1` — code-focused variant
@@ -112,7 +115,11 @@ config/prompts/
     system.md                   # xAI system prompt (COMPLEX route)
   meta/
     system.md                   # Meta pipeline system prompt
-docker-compose.yml              # All services: traefik, ai-router, vllm-router, vllm-primary
+infra/
+  docker-compose.yml            # All services: traefik, ai-router, vllm-router, vllm-primary
+  vram-requirements.md          # VRAM calculation guide
+  vllm-flags.md                 # Explanation of every vLLM flag in the compose file
+  CLAUDE.md                     # Infrastructure guardrails
 nano_v3_reasoning_parser.py     # vLLM reasoning parser plugin for Nano 30B
 Makefile                        # Common operations
 traefik/                        # Traefik reverse proxy config
@@ -129,6 +136,10 @@ agents/
 review-board.yaml               # Improvement Board config (roles, rules, process)
 Test                            # Integration test suite (bash)
 Benchmark                       # Latency, throughput, concurrency benchmarks (bash)
+.env                            # Non-sensitive config (TZ, XAI_MODEL, XAI_SEARCH_TOOLS)
+.env.example                    # Template for .env
+.secrets                        # API keys and tokens (gitignored, chmod 600)
+.secrets.example                # Template for .secrets
 logs/sessions/                  # Auto-generated per-request JSON session logs
 ```
 
@@ -209,7 +220,6 @@ These env vars control classification and enrichment behavior. Defaults work wel
 
 | Variable | Default | Description |
 |---|---|---|
-| `CLASSIFY_CONTEXT_BUDGET` | `2000` | Max chars of conversation history sent to classifier |
 | `XAI_MIN_MAX_TOKENS` | `16384` | Floor for max_tokens on xAI requests (prevents client low defaults) |
 | `VIRTUAL_MODEL` | `ai-router` | Model name exposed via `/v1/models` |
 

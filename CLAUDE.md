@@ -41,12 +41,14 @@ All local inference runs on a single workstation. Development and deployment dec
 
 **VRAM allocation (single GPU, shared):**
 
-Both vLLM containers share GPU 0. The split is configured in `docker-compose.yml` via `--gpu-memory-utilization`:
+Both vLLM containers share GPU 0. The split is configured in `infra/docker-compose.yml` via `--gpu-memory-utilization`:
 
 | Container | Model | VRAM budget | Context length |
 |-----------|-------|-------------|----------------|
-| `vllm-router` | Nemotron Orchestrator 8B (AWQ 4-bit) | ~14% (~13 GB) | 2,048 tokens |
+| `vllm-router` | Nemotron Orchestrator 8B (AWQ 4-bit) | ~14% (~13 GB) | 32,768 tokens |
 | `vllm-primary` | Nemotron Nano 30B (fp8 KV cache) | ~65% (~62 GB) | 32,768 tokens |
+
+Both models use the same `--max-model-len 32768`. This is a deliberate rule: **keep context length uniform across all local models.** A shorter classifier context causes silent failures (HTTP 400s) when long conversations hit the router — the classifier truncates or rejects input the primary would handle fine. Matching context lengths eliminates this class of bug entirely, and the 8B AWQ model fits comfortably within its 14% VRAM budget at 32K thanks to fp8_e4m3 KV cache.
 
 Configured total is 0.79 (14% + 65%), but actual VRAM usage is ~89% due to CUDA context overhead (~10%). This leaves ~11% (~10 GB) free as headroom. The router model weights are ~6 GB after AWQ 4-bit quantization; fp8_e4m3 KV cache and prefix caching keep memory efficient within the 14% budget. The primary also uses fp8 KV cache, which lets it maintain 32K context within its reduced 65% budget.
 
@@ -58,18 +60,19 @@ Configured total is 0.79 (14% + 65%), but actual VRAM usage is ~89% due to CUDA 
 | Primary | [unsloth/NVIDIA-Nemotron-3-Nano-30B-A3B-NVFP4](https://huggingface.co/unsloth/NVIDIA-Nemotron-3-Nano-30B-A3B-NVFP4) | NVFP4 quantization by Unsloth |
 | Cloud (xAI) | `grok-4-1-fast-reasoning` (default) | Configurable via `XAI_MODEL` env var |
 
-Available xAI models (set via `XAI_MODEL` in `.env`):
+Available xAI models (set via `XAI_MODEL` in `.env` — non-secret config):
 - `grok-4-1-fast-reasoning` — default, used for COMPLEX and ENRICH routes
 - `grok-4-1-fast-non-reasoning` — faster, no chain-of-thought
 - `grok-code-fast-1` — code-focused variant
 
-`nano_v3_reasoning_parser.py` is a vLLM reasoning parser plugin for the Nano 30B model's output format. It is sourced from the [Unsloth model page](https://huggingface.co/unsloth/NVIDIA-Nemotron-3-Nano-30B-A3B-NVFP4), not written as part of this project. It is mounted into the primary vLLM container and referenced via `--reasoning-parser-plugin` in `docker-compose.yml`.
+`nano_v3_reasoning_parser.py` is a vLLM reasoning parser plugin for the Nano 30B model's output format. It is sourced from the [Unsloth model page](https://huggingface.co/unsloth/NVIDIA-Nemotron-3-Nano-30B-A3B-NVFP4), not written as part of this project. It is mounted into the primary vLLM container and referenced via `--reasoning-parser-plugin` in `infra/docker-compose.yml`.
 
 ## Project Structure
 
 ```
 router.py                       # Entrypoint — runs src.app
 src/
+  CLAUDE.md                     # Python source guardrails (externalization, separation of concerns)
   app.py                        # Flask app, route handlers, pipeline dispatch
   providers.py                  # Route classification, enrichment, request forwarding
   config.py                     # Env vars, prompt loading, constants
@@ -80,6 +83,7 @@ config/prompts/
   routing/
     system.md                   # Classification system prompt for Orchestrator 8B
     request.md                  # Classification request template
+    truncation_note.md          # Note injected when the query is truncated for classification
   xai/
     system.md                   # xAI system prompt (COMPLEX route — conciseness guidance)
   enrichment/
@@ -87,7 +91,11 @@ config/prompts/
     injection.md                # Context injection template (prepended for primary)
   meta/
     system.md                   # Meta pipeline system prompt
-docker-compose.yml              # All services: traefik, ai-router, vllm-router, vllm-primary
+infra/
+  CLAUDE.md                     # Infrastructure guardrails (VRAM budget, restart rules)
+  docker-compose.yml            # All services: traefik, ai-router, vllm-router, vllm-primary
+  vram-requirements.md          # VRAM calculation guide (weights, KV cache, overhead)
+  vllm-flags.md                 # Explanation of every vLLM flag in the compose file
 Makefile                        # Common operations (up, down, test, health, etc.)
 traefik/                        # Traefik reverse proxy config
 docs/
@@ -106,6 +114,10 @@ AI_OPERATOR_PROFILE.md          # General AI assistant operating constraints
 requirements.txt                # Python dependencies
 Benchmark                       # Bash script — latency, throughput, concurrency benchmarks
 Test                            # Bash script — integration test suite (health, routing, endpoints)
+.env                            # Non-sensitive config (TZ, XAI_MODEL, XAI_SEARCH_TOOLS)
+.env.example                    # Template for .env
+.secrets                        # API keys and tokens (gitignored, chmod 600)
+.secrets.example                # Template for .secrets
 logs/sessions/                  # Auto-generated per-request JSON session logs
 ```
 
@@ -115,7 +127,7 @@ logs/sessions/                  # Auto-generated per-request JSON session logs
 - **Readability first.** Write comments that explain both *why* something exists and *what* it does — assume the reader is a human learning how routing systems work, not someone skimming for an API signature.
 - **Keep files small.** Look for logical separations and break things up before any single file gets unwieldy. Current split: `config.py` (env/prompts), `providers.py` (classification + forwarding), `app.py` (Flask routes + pipeline orchestration), `session_logger.py` (logging).
 - **Keep it followable.** This is a learning project — the code should be simple enough to trace end-to-end without jumping through layers of abstraction. That sometimes tensions with keeping files small; balance by splitting along clear logical boundaries, not by introducing indirection.
-- **Externalize configuration from code.** Prompts live in markdown files under `config/prompts/`, env vars drive all connection strings and feature flags, model names are configurable. Changing behavior shouldn't require editing Python when possible. This applies to *all* natural-language instructions sent to models — including behavioral guidance like "don't echo the system prompt." If it's a sentence a model reads, it belongs in a prompt file, not a Python string. **One deliberate exception:** `load_prompt_file()` in `config.py` accepts a hardcoded fallback string per prompt. These exist solely as a safety net so the service degrades gracefully (with a logged error) if a prompt file is missing — e.g. when running outside Docker without the `config/` volume. The authoritative prompts are always the markdown files; fallbacks should never be the primary path and should be kept roughly in sync with their corresponding files.
+- **Externalize configuration from code.** Prompts live in markdown files under `config/prompts/`, env vars drive all connection strings and feature flags, model names are configurable. Changing behavior shouldn't require editing Python when possible. This applies to *all* natural-language instructions sent to models — including behavioral guidance like "don't echo the system prompt." If it's a sentence a model reads, it belongs in a prompt file, not a Python string. **Secrets live in `.secrets`, not `.env`.** API keys and tokens (`HF_TOKEN`, `XAI_API_KEY`) go in `.secrets` (gitignored, `chmod 600`). Non-sensitive config (`TZ`, `XAI_MODEL`, `XAI_SEARCH_TOOLS`) goes in `.env`. The Makefile passes both via `--env-file .env --env-file .secrets` to Docker Compose. **One deliberate exception:** `load_prompt_file()` in `config.py` accepts a hardcoded fallback string per prompt. These exist solely as a safety net so the service degrades gracefully (with a logged error) if a prompt file is missing — e.g. when running outside Docker without the `config/` volume. The authoritative prompts are always the markdown files; fallbacks should never be the primary path and should be kept roughly in sync with their corresponding files.
 - **Strict separation of concerns.** Each component has one job. The router model classifies — it does not generate responses. The primary model generates — it does not classify. The enrichment pipeline fetches context — it does not answer questions. The Flask app orchestrates — it does not contain business logic. This isn't just good architecture; it's a defense against complexity creep. When an AI assistant (or a human in a flow state) is generating code, the temptation is to let responsibilities blur — "just add this one thing here." Resist. If a change crosses a boundary, it belongs in a different component. Every function, file, and service should be explainable in one sentence. If it can't be, it's doing too much.
 
 ## Architecture
@@ -131,7 +143,7 @@ This is an exploratory project — architecture decisions are working hypotheses
 - **Session logs as the observability layer.** Every routed request writes a full-lifecycle JSON file. This is the primary way to understand what the system did and why. No metrics, no dashboards — just inspectable files.
 - **OpenAI-compatible API as the only interface.** Any client that speaks the OpenAI chat format works transparently. The routing is invisible to the caller. The `/v1/models` endpoint presents a single virtual model (`ai-router` by default, configurable via `VIRTUAL_MODEL` env var) — external consumers like Open WebUI see one model and never know about the backend split.
 - **`/stats` endpoint is a labeled placeholder.** It exists in the route table but returns a stub message. It does not pretend to have data.
-- **The router owns `max_tokens`, not the client.** For all local models (both the classifier and the primary), `max_tokens` is stripped entirely — they generate until their natural stop token, bounded only by vLLM's `--max-model-len` (2K for the classifier, 32K for primary). Both are reasoning models that burn tokens on `<think>` blocks; any artificial cap risks truncating reasoning before useful output is emitted. For xAI, a floor (`XAI_MIN_MAX_TOKENS`, default 16K) prevents Open WebUI's low defaults from truncating answers. Other inference parameters (`temperature`, `top_p`, etc.) are still passed through from the client.
+- **The router owns `max_tokens`, not the client.** For all local models (both the classifier and the primary), `max_tokens` is stripped entirely — they generate until their natural stop token, bounded only by vLLM's `--max-model-len` (32K for both). Both are reasoning models that burn tokens on `<think>` blocks; any artificial cap risks truncating reasoning before useful output is emitted. For xAI, a floor (`XAI_MIN_MAX_TOKENS`, default 16K) prevents Open WebUI's low defaults from truncating answers. Other inference parameters (`temperature`, `top_p`, etc.) are still passed through from the client.
 - **Route-specific system prompts.** Each route gets its own behavioral prompt: `config/prompts/primary/system.md` for local model routes, `config/prompts/xai/system.md` for the COMPLEX route. Both emphasize conciseness. The primary prompt also includes reasoning guidance to keep `<think>` blocks focused. The enrichment and meta pipelines have their own prompts as before.
 
 ## Development

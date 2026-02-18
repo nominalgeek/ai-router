@@ -42,19 +42,14 @@ VIRTUAL_MODEL = os.getenv('VIRTUAL_MODEL', 'ai-router')
 # xAI search tools for enrichment (comma-separated: "web_search,x_search" or "" to disable)
 XAI_SEARCH_TOOLS = os.getenv('XAI_SEARCH_TOOLS', 'web_search,x_search')
 
-# How many characters of prior conversation the classifier sees when resolving
-# references in follow-up queries. Higher = better context resolution but uses
-# more of the router model's context window. ~4 chars ≈ 1 token.
-CLASSIFY_CONTEXT_BUDGET = int(os.getenv('CLASSIFY_CONTEXT_BUDGET', '2000'))
-
 # Client max_tokens handling strategy for the classifier:
 #
 # ROUTER (local classifier): Strip max_tokens entirely, same rationale as the
 # primary model.  The Orchestrator 8B is a reasoning model that wraps its
 # decision in <think> blocks.  Any artificial cap risks truncating reasoning
-# before the classification word is emitted (observed at 56% failure rate with
-# a 512-token cap on multi-turn conversations).  vLLM's --max-model-len
-# (2,048) is the only limit needed — the model emits its label and stops.
+# before the classification word is emitted.  vLLM's --max-model-len (32K,
+# same as primary) is the only limit needed — the model emits its label
+# and stops.
 
 # Client max_tokens handling strategy:
 #
@@ -131,6 +126,7 @@ def date_context():
 
 # Prompt file paths
 ROUTING_PROMPT_PATH = os.getenv('ROUTING_PROMPT_PATH', '/app/config/prompts/routing/request.md')
+ROUTING_TRUNCATION_NOTE_PATH = os.getenv('ROUTING_TRUNCATION_NOTE_PATH', '/app/config/prompts/routing/truncation_note.md')
 ROUTING_SYSTEM_PROMPT_PATH = os.getenv('ROUTING_SYSTEM_PROMPT_PATH', '/app/config/prompts/routing/system.md')
 PRIMARY_SYSTEM_PROMPT_PATH = os.getenv('PRIMARY_SYSTEM_PROMPT_PATH', '/app/config/prompts/primary/system.md')
 ENRICHMENT_SYSTEM_PROMPT_PATH = os.getenv('ENRICHMENT_SYSTEM_PROMPT_PATH', '/app/config/prompts/enrichment/system.md')
@@ -182,8 +178,15 @@ ROUTING_PROMPT = load_prompt_file(
     ROUTING_PROMPT_PATH,
     ('Classify this query as SIMPLE, MODERATE, COMPLEX, or ENRICH.\n'
      'User query: "{query}"\n'
+     '{truncation_note}\n'
      'Respond with ONLY ONE WORD: SIMPLE, MODERATE, COMPLEX, or ENRICH'),
     'routing prompt'
+)
+
+ROUTING_TRUNCATION_NOTE = load_prompt_file(
+    ROUTING_TRUNCATION_NOTE_PATH,
+    'Note: The above query was truncated. Classify based on what you can see.',
+    'routing truncation note'
 )
 
 ENRICHMENT_SYSTEM_PROMPT = load_prompt_file(

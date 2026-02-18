@@ -164,7 +164,7 @@ def main():
 if __name__ == "__main__":
     try:
         main()
-    except (SystemExit, KeyboardInterrupt):
+    except KeyboardInterrupt:
         pass
     except RuntimeError as e:
         if "Event loop is closed" not in str(e):

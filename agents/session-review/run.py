@@ -99,6 +99,7 @@ async def run_review(model: str, boardroom_report: str | None = None):
         "Read",
         "Glob",
         "Grep",
+        "Task",
         "Write(logs/reviews/*)",
         "Bash(mkdir -p logs/reviews)",
         "Bash(mkdir -p logs/reviews/boardroom)",
@@ -146,7 +147,7 @@ def main():
 if __name__ == "__main__":
     try:
         main()
-    except (SystemExit, KeyboardInterrupt):
+    except KeyboardInterrupt:
         pass
     except RuntimeError as e:
         if "Event loop is closed" not in str(e):

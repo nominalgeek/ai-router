@@ -1,4 +1,4 @@
-version: '3.8'
+name: ai-router
 
 services:
   traefik:
@@ -10,7 +10,7 @@ services:
       - "8080:8080"  # Dashboard - secure this in production
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock:ro
-      - ./traefik:/etc/traefik
+      - ../traefik:/etc/traefik
     command:
       - --log.level=INFO  # Changed from DEBUG for production
       - --api.dashboard=true
@@ -33,11 +33,11 @@ services:
     user: "1000:1000"
     command: bash -c "pip install --no-cache-dir --user -r requirements.txt && python router.py"
     volumes:
-      - ./router.py:/app/router.py
-      - ./src:/app/src
-      - ./requirements.txt:/app/requirements.txt
-      - ./config:/app/config
-      - ./logs:/var/log/ai-router
+      - ../router.py:/app/router.py
+      - ../src:/app/src
+      - ../requirements.txt:/app/requirements.txt
+      - ../config:/app/config
+      - ../logs:/var/log/ai-router
     working_dir: /app
     environment:
       - HOME=/tmp
@@ -82,8 +82,9 @@ services:
       --kv-cache-dtype fp8_e4m3
       --calculate-kv-scales
       --gpu-memory-utilization 0.14
-      --max-model-len 2048
-      --port 8001      
+      --max-model-len 32768
+      --max-num-seqs 3
+      --port 8001
       --trust-remote-code
       --enable-prefix-caching
       --disable-log-stats
@@ -132,14 +133,14 @@ services:
       --kv-cache-dtype fp8
       --gpu-memory-utilization 0.65
       --max-model-len 32768
-      --max-num-seqs 8
+      --max-num-seqs 3
       --disable-log-stats
       --port 8000
       --trust-remote-code
       --reasoning-parser-plugin /app/nano_v3_reasoning_parser.py
       --reasoning-parser nano_v3
     volumes:
-      - ./nano_v3_reasoning_parser.py:/app/nano_v3_reasoning_parser.py
+      - ../nano_v3_reasoning_parser.py:/app/nano_v3_reasoning_parser.py
       - hf-cache:/root/.cache/huggingface
     deploy:
       resources:

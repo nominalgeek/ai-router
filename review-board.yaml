@@ -203,13 +203,13 @@ rules:
     - "config/prompts/routing/request.md"
     - "config/prompts/enrichment/system.md"
     - "config/prompts/enrichment/injection.md"
+    - "config/prompts/primary/system.md"
+    - "config/prompts/meta/system.md"
 
   # --- Protected files (no agent may modify) ---
   protected_files:
-    - "config/prompts/primary/system.md"
-    - "config/prompts/meta/system.md"
     - "src/*.py"
-    - "docker-compose.yml"
+    - "infra/docker-compose.yml"
     - "Makefile"
     - "review-board.yaml"  # The board cannot modify its own rules
 

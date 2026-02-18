@@ -1,0 +1,5 @@
+# Secrets — never let Claude read API keys
+.secrets
+.env.local
+*.pem
+*.key

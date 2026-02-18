@@ -62,9 +62,13 @@ This is a homelab AI router that classifies incoming requests and routes them to
 | File | What it documents |
 |------|-------------------|
 | `CLAUDE.md` | Project constitution — architecture decisions, coding conventions, env vars, project structure |
+| `src/CLAUDE.md` | Python source guardrails — externalization rules, separation of concerns |
 | `README.md` | User-facing setup guide — quick start, configuration, API endpoints, Makefile targets |
 | `docs/architecture.md` | Mermaid diagrams — pipeline flow, deployment topology, endpoint table |
 | `agents/session-review/AGENT.md` | Task spec for the session-review agent — references routes, log formats, config values |
+| `infra/CLAUDE.md` | Infrastructure guardrails — safe-to-change params, VRAM budget, restart rules |
+| `infra/vllm-flags.md` | Explanation of every vLLM flag in the compose file |
+| `infra/vram-requirements.md` | VRAM calculation guide — weights, KV cache formulas, overhead estimates |
 
 ## Your Task
 
@@ -82,7 +86,7 @@ Read these files completely — they define what the system actually does:
 - `router.py` — entrypoint
 
 **Infrastructure:**
-- `docker-compose.yml` — container names, ports, images, VRAM allocations, model arguments
+- `infra/docker-compose.yml` — container names, ports, images, VRAM allocations, model arguments
 - `Makefile` — all targets and their descriptions
 - `requirements.txt` — Python dependencies
 
@@ -127,11 +131,11 @@ Compare what the docs say against what the code does. Check each of these catego
 - Are HTTP methods correct?
 
 #### Container/service names and ports
-- Do documented container names match `docker-compose.yml`?
+- Do documented container names match `infra/docker-compose.yml`?
 - Do documented ports match the actual port mappings?
 
 #### VRAM and memory
-- Do documented VRAM percentages match `--gpu-memory-utilization` in `docker-compose.yml`?
+- Do documented VRAM percentages match `--gpu-memory-utilization` in `infra/docker-compose.yml`?
 - Do the derived GB figures match the percentages (based on 96 GB total)?
 - Are context lengths consistent between docs and `--max-model-len` args?
 
@@ -152,7 +156,7 @@ Compare what the docs say against what the code does. Check each of these catego
 - Do diagrams and descriptions of what gets sent to the classifier match the actual code in `providers.py`?
 
 #### Docker images
-- Do documented image names/versions match `docker-compose.yml`?
+- Do documented image names/versions match `infra/docker-compose.yml`?
 
 #### Test coverage
 - Do the test scripts reference the correct endpoints, model names, and expected behavior?
@@ -211,7 +215,7 @@ Documentation files you may edit:
 
 **Do NOT edit:**
 - Any Python source files
-- `docker-compose.yml`
+- `infra/docker-compose.yml`
 - `Makefile`
 - Prompt files under `config/prompts/`
 - Test scripts

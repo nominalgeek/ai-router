@@ -35,6 +35,7 @@ BOARDROOM_DIR = PROJECT_ROOT / "logs" / "reviews" / "boardroom"
 def parse_args():
     parser = argparse.ArgumentParser(description="Run the Improvement Board cycle")
     parser.add_argument("--model", default="sonnet", help="Claude model (default: sonnet)")
+    parser.add_argument("--ceo-model", default="opus", help="Model for Session CEO (default: opus)")
     return parser.parse_args()
 
 
@@ -95,7 +96,7 @@ def main():
         "Session CEO — analyzing logs",
         str(AGENTS_DIR / "session-review" / "run.py"),
         ["--boardroom", ceo_report],
-        args.model,
+        args.ceo_model,
     )
     if not ceo_ok:
         write_lineage(record_id, ts, reports, "ceo_failed")
