@@ -1,0 +1,254 @@
+# ===========================================================================
+# review-board.yaml — Improvement Board for ai-router self-improvement loop
+# ===========================================================================
+#
+# A minimal governance layer over the review/improvement cycle.
+# Borrowed from AgentBoardroom's separation-of-powers pattern, but
+# stripped to three roles and one sequential pipeline.  Nothing here
+# touches the live routing stack — it only governs the *review* of
+# session logs and the *proposal* of prompt changes.
+#
+# How it works:
+#   1. Session CEO analyzes logs and proposes improvements.
+#   2. Adversarial Challenger MUST critique every proposal.
+#   3. QA Validator gates any change that would touch prompt files.
+#   4. Every cycle produces an immutable decision record.
+#
+# Run the full cycle:  make boardroom-review
+# Run individual agents as before:  make review  /  make doc-review
+# ===========================================================================
+
+
+# ---------------------------------------------------------------------------
+# Roles — exactly three, with strict separation of powers
+# ---------------------------------------------------------------------------
+# Design rationale:
+#   - CEO proposes (cannot approve its own changes)
+#   - Challenger critiques (cannot propose or approve)
+#   - QA validates (cannot propose or critique — only pass/fail)
+#   No single role controls more than one phase of the pipeline.
+# ---------------------------------------------------------------------------
+
+roles:
+
+  # --- Session CEO ---
+  # The analyst and proposer.  Reads session logs, identifies patterns,
+  # and drafts concrete improvement proposals.  This role enhances the
+  # existing session-review agent — same log analysis, but now its output
+  # feeds into the challenge/gate pipeline instead of being the final word.
+  session_ceo:
+    title: "Session CEO"
+    agent: "agents/session-review/AGENT.md"
+    runner: "agents/session-review/run.py"
+    responsibilities:
+      - "Analyze session logs in logs/sessions/ and logs/app.log"
+      - "Identify misclassifications, enrichment failures, latency outliers"
+      - "Propose specific, scoped prompt edits with rationale and evidence"
+    outputs:
+      # The CEO writes its review report as before, PLUS a structured
+      # proposals section that the Challenger can evaluate.
+      report: "logs/reviews/boardroom/{timestamp}_ceo_report.md"
+    constraints:
+      - "May NOT apply prompt edits directly — proposals only"
+      - "Every proposal must cite 3+ session IDs as evidence"
+      - "One proposal per misclassification pattern (no bundling)"
+
+  # --- Adversarial Challenger ---
+  # The critic.  This is the KEY NEW ADDITION — the highest-value role
+  # for iteration quality.  Every CEO proposal MUST pass through an
+  # adversarial challenge round before it can reach the QA gate.
+  #
+  # Why this role matters:
+  #   Without it, the review loop is: "agent finds issue → agent fixes issue."
+  #   That's a single perspective making unchecked changes to prompts that
+  #   affect every future request.  The Challenger forces a second opinion:
+  #   - Are the cited sessions actually misclassified, or edge cases?
+  #   - Will the proposed fix cause regressions on other query types?
+  #   - Is the sample size sufficient, or is this noise?
+  #   - Does the fix respect architectural boundaries?
+  #
+  # The Challenger does NOT need to propose alternatives — its job is to
+  # find weaknesses.  A proposal that survives challenge is stronger for it.
+  adversarial_challenger:
+    title: "Adversarial Challenger"
+    agent: "agents/challenger/AGENT.md"
+    runner: "agents/challenger/run.py"
+    responsibilities:
+      - "Critically evaluate every CEO proposal for logical weaknesses"
+      - "Check whether cited evidence actually supports the conclusion"
+      - "Identify potential regressions the proposed change could cause"
+      - "Verify the fix respects architectural boundaries (classifier vs. generator)"
+    inputs:
+      # Reads the CEO's report and proposals, plus the same session logs
+      # for independent verification.
+      ceo_report: "logs/reviews/boardroom/{timestamp}_ceo_report.md"
+      session_logs: "logs/sessions/"
+    outputs:
+      # A challenge report with a verdict per proposal.
+      report: "logs/reviews/boardroom/{timestamp}_challenger_report.md"
+    verdicts:
+      # Each proposal gets exactly one verdict:
+      - "ACCEPTED"       # No significant weaknesses found — passes to QA
+      - "CHALLENGED"     # Specific weaknesses identified — proposal blocked
+      - "NEEDS_EVIDENCE" # Conclusion plausible but evidence insufficient
+    constraints:
+      - "MUST challenge every proposal — no blanket approvals"
+      - "Challenges must cite specific counter-evidence or logical gaps"
+      - "May NOT propose alternative fixes (that's the CEO's job)"
+      - "May NOT approve its own suggestions"
+
+  # --- QA Validator ---
+  # The hard gate.  No prompt edit lands without QA sign-off.
+  # Leverages the existing doc-review agent for documentation consistency,
+  # and adds a lightweight benchmark check to catch regressions.
+  qa_validator:
+    title: "QA Validator"
+    agent: "agents/doc-review/AGENT.md"
+    runner: "agents/doc-review/run.py"
+    responsibilities:
+      - "Verify ACCEPTED proposals won't break documentation consistency"
+      - "Run a quick benchmark check (make benchmark) if prompt files changed"
+      - "Issue a final PASS or FAIL verdict on the improvement cycle"
+    inputs:
+      ceo_report: "logs/reviews/boardroom/{timestamp}_ceo_report.md"
+      challenger_report: "logs/reviews/boardroom/{timestamp}_challenger_report.md"
+    outputs:
+      report: "logs/reviews/boardroom/{timestamp}_qa_report.md"
+    verdicts:
+      - "PASS"  # All checks green — prompt edits may be applied
+      - "FAIL"  # Issues found — cycle blocked, human review required
+    constraints:
+      - "May NOT modify proposals or suggest alternatives"
+      - "FAIL verdict requires specific reason (not just 'looks risky')"
+      - "Benchmark check is advisory — a FAIL requires a concrete regression"
+
+
+# ---------------------------------------------------------------------------
+# Process — the mandatory sequence for every improvement cycle
+# ---------------------------------------------------------------------------
+
+process:
+
+  # Step 1: CEO analyzes logs and writes proposals
+  analyze:
+    role: "session_ceo"
+    description: "Analyze session logs and produce improvement proposals"
+    # The CEO's existing review process, but with proposals structured
+    # for downstream challenge instead of direct application.
+
+  # Step 2: Challenger adversarially reviews every proposal
+  challenge:
+    role: "adversarial_challenger"
+    description: "Adversarial critique of every CEO proposal"
+    depends_on: "analyze"
+    # MANDATORY — this step cannot be skipped.  If the Challenger agent
+    # fails or is unavailable, the cycle halts (no silent bypass).
+    required: true
+
+  # Step 3: QA validates surviving proposals
+  validate:
+    role: "qa_validator"
+    description: "Final quality gate before any prompt changes land"
+    depends_on: "challenge"
+    # Only proposals with ACCEPTED verdict reach this step.
+    # If zero proposals survived challenge, QA still runs to confirm
+    # the "no changes" decision is logged.
+    required: true
+
+
+# ---------------------------------------------------------------------------
+# Rules — governance constraints for the entire board
+# ---------------------------------------------------------------------------
+
+rules:
+
+  # --- Mandatory challenge round ---
+  # Every proposal from the CEO MUST go through the Challenger.
+  # There is no fast-path that skips adversarial review.
+  # Rationale: a single-perspective review loop will converge on
+  # the reviewer's biases.  The challenge round is the cheapest way
+  # to catch blind spots before they become prompt regressions.
+  mandatory_challenge: true
+
+  # --- QA gate required for prompt edits ---
+  # If the cycle would result in any file under config/prompts/ being
+  # modified, QA MUST pass.  "No changes" cycles still produce a
+  # decision record but skip the benchmark check.
+  qa_gate_for_edits: true
+
+  # --- No self-approval ---
+  # No role may approve its own output.  The CEO cannot accept its
+  # own proposals; the Challenger cannot challenge its own critiques;
+  # QA cannot validate its own verdicts.  This is the core separation
+  # of powers.
+  no_self_approval: true
+
+  # --- Single challenge round ---
+  # Unlike AgentBoardroom's 3-round escalation, we use exactly one
+  # challenge round.  If a proposal is CHALLENGED, it's blocked for
+  # this cycle — the CEO can revise and re-propose in the next run.
+  # Keeps the cycle simple and predictable.
+  max_challenge_rounds: 1
+
+  # --- Human escalation ---
+  # Any FAIL verdict from QA, or any cycle where the Challenger flags
+  # an architectural concern, produces a human-review marker in the
+  # decision record.  The human (you) reviews at your convenience.
+  human_escalation_on_fail: true
+
+  # --- Prompt files the board may edit (after full pipeline approval) ---
+  # Same whitelist as the existing session-review agent.
+  editable_files:
+    - "config/prompts/routing/system.md"
+    - "config/prompts/routing/request.md"
+    - "config/prompts/enrichment/system.md"
+    - "config/prompts/enrichment/injection.md"
+
+  # --- Protected files (no agent may modify) ---
+  protected_files:
+    - "config/prompts/primary/system.md"
+    - "config/prompts/meta/system.md"
+    - "src/*.py"
+    - "docker-compose.yml"
+    - "Makefile"
+    - "review-board.yaml"  # The board cannot modify its own rules
+
+
+# ---------------------------------------------------------------------------
+# Decision lineage — immutable log of every improvement cycle
+# ---------------------------------------------------------------------------
+# Every boardroom-review run produces a decision record in JSON.
+# These are append-only — never edited or deleted after creation.
+# They form a queryable history of what was proposed, challenged,
+# and accepted/rejected, with full rationale at each step.
+# ---------------------------------------------------------------------------
+
+decision_lineage:
+
+  # Where decision records are stored (one JSON file per cycle)
+  output_dir: "logs/reviews/boardroom"
+
+  # What each decision record contains
+  record_format:
+    id: "BR-{sequential}"               # e.g. BR-0001, BR-0002
+    timestamp: "ISO 8601"
+    trigger: "manual | scheduled"        # How the cycle was initiated
+    proposals:                           # List of CEO proposals
+      - summary: "string"               # One-line description
+        evidence_session_ids: ["list"]   # Session IDs cited as evidence
+        target_file: "string"            # Which prompt file would change
+        proposed_diff: "string"          # The actual edit (unified diff)
+        challenger_verdict: "ACCEPTED | CHALLENGED | NEEDS_EVIDENCE"
+        challenge_reason: "string | null"
+        qa_verdict: "PASS | FAIL | null" # null if blocked by Challenger
+        qa_reason: "string | null"
+    outcome: "changes_applied | no_changes | human_review_required"
+    human_review: false                  # Flipped to true if escalated
+    reports:                             # Paths to the three agent reports
+      ceo: "string"
+      challenger: "string"
+      qa: "string"
+
+  # Retention: match the session log rotation (7 days / 5000 files)
+  # Decision records are small; keeping them longer is fine.
+  retention_days: 90
