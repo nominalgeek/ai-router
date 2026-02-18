@@ -162,4 +162,13 @@ def main():
 
 
 if __name__ == "__main__":
-    main()
+    try:
+        main()
+    except (SystemExit, KeyboardInterrupt):
+        pass
+    except RuntimeError as e:
+        if "Event loop is closed" not in str(e):
+            raise
+    except Exception as e:
+        print(f"Error: {e}", file=sys.stderr)
+        sys.exit(1)
