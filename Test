@@ -59,8 +59,8 @@ test_endpoint() {
 echo "1. Checking if services are running..."
 echo ""
 
-if ! docker compose ps | grep -q "Up"; then
-    echo -e "${RED}Error: Services are not running. Start with 'docker compose up -d'${NC}"
+if ! docker compose -f infra/docker-compose.yml --env-file .env --env-file .secrets ps | grep -q "Up"; then
+    echo -e "${RED}Error: Services are not running. Start with 'make up'${NC}"
     exit 1
 fi
 
@@ -511,7 +511,7 @@ echo "  • ENRICH   → xAI context → Nano 30B (enrichment pipeline)"
 echo "  • META     → Nano 30B (meta pipeline, skips classification)"
 echo ""
 echo "Next steps:"
-echo "  • View logs: docker compose logs -f"
+echo "  • View logs: make logs"
 echo "  • Run benchmarks: make benchmark"
 echo "  • Traefik dashboard: http://localhost:8080"
 echo ""

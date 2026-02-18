@@ -10,6 +10,7 @@ Code SDK, and streaming progress to stdout.
 
 Usage:
     python agents/doc-review/run.py [--model MODEL]
+    python agents/doc-review/run.py --boardroom <ceo_report> <challenger_report> [--model MODEL]
 
 Requires:
     - claude-code-sdk  (pip install claude-code-sdk)
@@ -55,53 +56,82 @@ def parse_args():
         default="sonnet",
         help="Claude model to use (default: sonnet)",
     )
+    parser.add_argument(
+        "--boardroom",
+        nargs=2,
+        metavar=("CEO_REPORT", "CHALLENGER_REPORT"),
+        help="Run in boardroom mode — validate proposals from these two reports",
+    )
     return parser.parse_args()
 
 
-async def run_review(model: str):
-    """Launch the doc-review agent and stream progress to stdout."""
+async def run_review(model: str, boardroom_reports: list[str] | None = None):
+    """Launch the doc-review agent and stream progress to stdout.
+
+    Args:
+        model: Claude model to use.
+        boardroom_reports: If set, a [ceo_report, challenger_report] pair.
+            The agent runs in QA Validator mode instead of full doc review.
+    """
 
     if not AGENT_PROMPT.exists():
         print(f"Agent prompt not found: {AGENT_PROMPT}")
         return False
 
-    # Verify we can find the source files
-    missing = [f for f in SOURCE_FILES if not f.exists()]
-    if missing:
-        print("Missing source files (wrong working directory?):")
-        for f in missing:
-            print(f"  {f}")
-        return False
+    if not boardroom_reports:
+        # Standalone mode: verify source files exist
+        missing = [f for f in SOURCE_FILES if not f.exists()]
+        if missing:
+            print("Missing source files (wrong working directory?):")
+            for f in missing:
+                print(f"  {f}")
+            return False
 
     print(f"Project root: {PROJECT_ROOT}")
+    print(f"Mode: {'boardroom (QA Validator)' if boardroom_reports else 'standalone'}")
     print(f"Model: {model}")
     print("---")
 
     prompt = AGENT_PROMPT.read_text()
 
-    # Tool permissions mirror what the agent spec in AGENT.md allows:
-    #   - Read/Glob/Grep: full project access (read-only exploration)
-    #   - Edit: only documentation files (surgical fixes per AGENT.md Step 5)
-    #   - Write: only to logs/reviews/ (report output)
-    #   - Bash: only mkdir for the reviews directory
-    #
+    if boardroom_reports:
+        ceo_report, challenger_report = boardroom_reports
+        # Boardroom mode: prepend the marker so the agent acts as QA Validator
+        # instead of doing a full doc review.
+        prompt = (
+            f"BOARDROOM_MODE=true\n\n"
+            f"CEO report to validate: `{ceo_report}`\n"
+            f"Challenger report to validate: `{challenger_report}`\n\n"
+            f"---\n\n{prompt}"
+        )
+
+    # Tool permissions differ by mode:
+    #   Standalone: can edit doc files (surgical fixes per AGENT.md Step 5)
+    #   Boardroom: read-only + write report to boardroom dir only
+    allowed_tools = [
+        "Read",
+        "Glob",
+        "Grep",
+        "Write(logs/reviews/*)",
+        "Bash(mkdir -p logs/reviews)",
+        "Bash(mkdir -p logs/reviews/boardroom)",
+    ]
+    if not boardroom_reports:
+        # Standalone mode: allow doc edits
+        allowed_tools.extend([
+            "Edit(README.md)",
+            "Edit(CLAUDE.md)",
+            "Edit(docs/*)",
+            "Edit(agents/session-review/AGENT.md)",
+        ])
+
     # permission_mode="acceptEdits" auto-approves these without a TTY,
     # which is what makes this work headlessly from make/cron/CI.
     options = ClaudeCodeOptions(
         model=model,
         cwd=str(PROJECT_ROOT),
         permission_mode="acceptEdits",
-        allowed_tools=[
-            "Read",
-            "Glob",
-            "Grep",
-            "Write(logs/reviews/*)",
-            "Edit(README.md)",
-            "Edit(CLAUDE.md)",
-            "Edit(docs/*)",
-            "Edit(agents/session-review/AGENT.md)",
-            "Bash(mkdir -p logs/reviews)",
-        ],
+        allowed_tools=allowed_tools,
     )
 
     async for message in query(prompt=prompt, options=options):
@@ -127,9 +157,18 @@ async def run_review(model: str):
 
 def main():
     args = parse_args()
-    success = asyncio.run(run_review(args.model))
+    success = asyncio.run(run_review(args.model, args.boardroom))
     sys.exit(0 if success else 1)
 
 
 if __name__ == "__main__":
-    main()
+    try:
+        main()
+    except KeyboardInterrupt:
+        pass
+    except RuntimeError as e:
+        if "Event loop is closed" not in str(e):
+            raise
+    except Exception as e:
+        print(f"Error: {e}", file=sys.stderr)
+        sys.exit(1)

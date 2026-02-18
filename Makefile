@@ -1,12 +1,14 @@
 .PHONY: help up down restart restart-all restart-gpu \
        logs logs-router logs-primary logs-ai \
-       status health models gpu gpu-watch up-watch stats clean clean-all backup restore \
+       status health models gpu gpu-watch up-watch stats clean clean-logs clean-all backup restore \
        venv test benchmark test-router test-primary pull update \
-       shell-router shell-primary shell-ai validate network volumes prune review doc-review
+       shell-router shell-primary shell-ai validate network volumes prune review doc-review \
+       boardroom-review
 
 VENV_DIR := .venv
 PYTHON := $(VENV_DIR)/bin/python
 PIP := $(VENV_DIR)/bin/pip
+COMPOSE := docker compose -f infra/docker-compose.yml --env-file .env --env-file .secrets
 
 help: ## Show this help message
 	@echo 'Usage: make [target]'
@@ -25,61 +27,61 @@ $(VENV_DIR)/bin/activate: requirements.txt
 
 up: ## Start all services (sequential GPU startup to avoid VRAM conflicts)
 	@echo "Starting traefik..."
-	docker compose up -d traefik
+	$(COMPOSE) up -d traefik
 	@echo "Starting router model (small, loads first)..."
-	docker compose up -d router
+	$(COMPOSE) up -d router
 	@echo "Waiting for router to be healthy..."
 	@until docker inspect --format='{{.State.Health.Status}}' vllm-router 2>/dev/null | grep -q healthy; do \
 		sleep 5; echo "  router loading..."; \
 	done
 	@echo "✓ Router healthy — starting primary model..."
-	docker compose up -d primary
+	$(COMPOSE) up -d primary
 	@echo "Waiting for primary to be healthy..."
 	@until docker inspect --format='{{.State.Health.Status}}' vllm-primary 2>/dev/null | grep -q healthy; do \
 		sleep 5; echo "  primary loading..."; \
 	done
 	@echo "✓ Primary healthy — starting ai-router..."
-	docker compose up -d ai-router
+	$(COMPOSE) up -d ai-router
 	@echo "✓ All services started"
 
 down: ## Stop all services (GPU containers first to release VRAM cleanly)
-	docker compose down
+	$(COMPOSE) down
 	@echo "Waiting for GPU memory to release..."
 	@while nvidia-smi --query-compute-apps=pid --format=csv,noheader 2>/dev/null | grep -q .; do \
 		sleep 2; \
 	done
 
 restart: ## Restart ai-router only (no VRAM impact — use for code/prompt changes)
-	docker compose restart ai-router
+	$(COMPOSE) restart ai-router
 
 restart-all: down up ## Restart everything (sequential to avoid VRAM conflicts)
 
 restart-gpu: ## Restart only GPU containers (sequential to avoid VRAM conflicts)
 	@echo "Stopping GPU containers..."
-	docker compose stop primary router
+	$(COMPOSE) stop primary router
 	@echo "Waiting for GPU memory to release..."
 	@while nvidia-smi --query-compute-apps=pid --format=csv,noheader 2>/dev/null | grep -q .; do \
 		sleep 2; \
 	done
 	@echo "GPU clear — starting router model..."
-	docker compose start router
+	$(COMPOSE) start router
 	@until docker inspect --format='{{.State.Health.Status}}' vllm-router 2>/dev/null | grep -q healthy; do \
 		sleep 5; echo "  router loading..."; \
 	done
 	@echo "✓ Router healthy — starting primary model..."
-	docker compose start primary
+	$(COMPOSE) start primary
 
 logs: ## Follow logs for all services
-	docker compose logs -f
+	$(COMPOSE) logs -f
 
 logs-router: ## Follow logs for router service
-	docker compose logs -f router
+	$(COMPOSE) logs -f router
 
 logs-primary: ## Follow logs for primary service
-	docker compose logs -f primary
+	$(COMPOSE) logs -f primary
 
 logs-ai: ## Follow logs for ai-router service
-	docker compose logs -f ai-router
+	$(COMPOSE) logs -f ai-router
 
 status: ## Quick health check (one-line summary)
 	@r=$$(curl -sf http://localhost/health 2>/dev/null | jq -r '.status // "unreachable"'); \
@@ -92,7 +94,7 @@ status: ## Quick health check (one-line summary)
 
 health: ## Check health of all services (verbose)
 	@echo "=== Service Status ==="
-	@docker compose ps
+	@$(COMPOSE) ps
 	@echo ""
 	@echo "=== Health Checks ==="
 	@echo "AI Router:"
@@ -140,9 +142,9 @@ up-watch: ## Start all services while logging VRAM to logs/vram-startup.log
 	WATCH_PID=$$!; \
 	echo "  monitor PID: $$WATCH_PID"; \
 	echo "Starting traefik..."; \
-	docker compose up -d traefik; \
+	$(COMPOSE) up -d traefik; \
 	echo "Starting router model (small, loads first)..."; \
-	docker compose up -d router; \
+	$(COMPOSE) up -d router; \
 	echo "Waiting for router to be healthy..."; \
 	until docker inspect --format='{{.State.Health.Status}}' vllm-router 2>/dev/null | grep -q healthy; do \
 		sleep 5; echo "  router loading..."; \
@@ -150,7 +152,7 @@ up-watch: ## Start all services while logging VRAM to logs/vram-startup.log
 	echo "✓ Router healthy — VRAM after router:"; \
 	tail -1 logs/vram-startup.log; \
 	echo "Starting primary model..."; \
-	docker compose up -d primary; \
+	$(COMPOSE) up -d primary; \
 	echo "Waiting for primary to be healthy..."; \
 	until docker inspect --format='{{.State.Health.Status}}' vllm-primary 2>/dev/null | grep -q healthy; do \
 		sleep 5; echo "  primary loading..."; \
@@ -158,7 +160,7 @@ up-watch: ## Start all services while logging VRAM to logs/vram-startup.log
 	echo "✓ Primary healthy — VRAM after primary:"; \
 	tail -1 logs/vram-startup.log; \
 	echo "Starting ai-router..."; \
-	docker compose up -d ai-router; \
+	$(COMPOSE) up -d ai-router; \
 	echo "✓ All services started — stopping VRAM monitor"; \
 	kill $$WATCH_PID 2>/dev/null; \
 	echo ""; \
@@ -168,10 +170,21 @@ stats: ## Show container resource usage
 	docker stats --no-stream
 
 clean: ## Remove containers and networks (keeps volumes)
-	docker compose down
+	$(COMPOSE) down
+
+clean-logs: ## Delete session logs and app logs (restarts ai-router if running)
+	@rm -f logs/sessions/*.json
+	@rm -f logs/app.log logs/app.log.*
+	@rm -f logs/vram-startup.log
+	@if docker inspect --format='{{.State.Running}}' ai-router 2>/dev/null | grep -q true; then \
+		$(COMPOSE) restart ai-router; \
+		echo "✓ Logs cleared, ai-router restarted"; \
+	else \
+		echo "✓ Logs cleared"; \
+	fi
 
 clean-all: ## Remove everything including volumes
-	docker compose down -v
+	$(COMPOSE) down -v
 	@echo "⚠️  Cache cleared - next startup will re-download models"
 
 backup: ## Backup Hugging Face cache
@@ -203,6 +216,9 @@ review: ## Run session-review agent on accumulated logs
 doc-review: ## Run doc-review agent to check docs against code
 	$(PYTHON) agents/doc-review/run.py
 
+boardroom-review: ## Run Improvement Board cycle (CEO → Challenger → QA)
+	$(PYTHON) agents/boardroom_run.py
+
 test-router: ## Test router model with sample request
 	curl -X POST http://localhost/router/v1/chat/completions \
 		-H "Content-Type: application/json" \
@@ -214,21 +230,21 @@ test-primary: ## Test primary model with sample request
 		-d '{"model": "unsloth/NVIDIA-Nemotron-3-Nano-30B-A3B-NVFP4", "messages": [{"role": "user", "content": "Explain quantum computing briefly"}], "max_tokens": 200}'
 
 pull: ## Pull latest images
-	docker compose pull
+	$(COMPOSE) pull
 
 update: pull down up ## Update to latest images
 
 shell-router: ## Open shell in router container
-	docker compose exec router /bin/bash
+	$(COMPOSE) exec router /bin/bash
 
 shell-primary: ## Open shell in primary container
-	docker compose exec primary /bin/bash
+	$(COMPOSE) exec primary /bin/bash
 
 shell-ai: ## Open shell in ai-router container
-	docker compose exec ai-router /bin/bash
+	$(COMPOSE) exec ai-router /bin/bash
 
 validate: ## Validate docker compose configuration
-	docker compose config
+	$(COMPOSE) config
 
 network: ## Show network information
 	docker network inspect ai-router_ai-network

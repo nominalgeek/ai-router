@@ -31,16 +31,19 @@ Exposes an OpenAI-compatible API so any client that speaks the OpenAI format (e.
 
    ```bash
    git clone <repo-url> && cd ai-router
-   cp .env.example .env   # or create .env manually
    ```
 
-   Add your keys to `.env`:
+   Create `.env` for non-sensitive config:
+   ```
+   TZ=America/Los_Angeles                   # timezone, defaults to US Pacific
+   XAI_SEARCH_TOOLS=web_search,x_search     # optional, see below
+   XAI_MODEL=grok-4-1-fast-reasoning        # optional, see below
+   ```
+
+   Create `.secrets` for API keys (gitignored, `chmod 600`):
    ```
    HF_TOKEN=<your-huggingface-token>
    XAI_API_KEY=<your-xai-api-key>           # optional
-   XAI_SEARCH_TOOLS=web_search,x_search     # optional, see below
-   XAI_MODEL=grok-4-1-fast-reasoning        # optional, see below
-   TZ=America/Los_Angeles                   # timezone, defaults to US Pacific
    ```
 
 2. **Start services**
@@ -74,7 +77,7 @@ Exposes an OpenAI-compatible API so any client that speaks the OpenAI format (e.
 | Primary | [unsloth/NVIDIA-Nemotron-3-Nano-30B-A3B-NVFP4](https://huggingface.co/unsloth/NVIDIA-Nemotron-3-Nano-30B-A3B-NVFP4) | NVFP4 quantization by Unsloth |
 | Cloud | Grok (xAI API) | Configurable via `XAI_MODEL` env var |
 
-Available xAI models (set via `XAI_MODEL` in `.env`):
+Available xAI models (set via `XAI_MODEL` in `.env` — non-secret config):
 - `grok-4-1-fast-reasoning` — default, used for COMPLEX and ENRICH routes
 - `grok-4-1-fast-non-reasoning` — faster, no chain-of-thought
 - `grok-code-fast-1` — code-focused variant
@@ -112,7 +115,11 @@ config/prompts/
     system.md                   # xAI system prompt (COMPLEX route)
   meta/
     system.md                   # Meta pipeline system prompt
-docker-compose.yml              # All services: traefik, ai-router, vllm-router, vllm-primary
+infra/
+  docker-compose.yml            # All services: traefik, ai-router, vllm-router, vllm-primary
+  vram-requirements.md          # VRAM calculation guide
+  vllm-flags.md                 # Explanation of every vLLM flag in the compose file
+  CLAUDE.md                     # Infrastructure guardrails
 nano_v3_reasoning_parser.py     # vLLM reasoning parser plugin for Nano 30B
 Makefile                        # Common operations
 traefik/                        # Traefik reverse proxy config
@@ -120,11 +127,19 @@ docs/
   architecture.md               # Mermaid architecture diagrams
 agents/
   session-review/
-    AGENT.md                    # Task spec for autonomous session-review agent
+    AGENT.md                    # Task spec for session-review agent (Session CEO in boardroom)
   doc-review/
-    AGENT.md                    # Task spec for documentation-review agent
+    AGENT.md                    # Task spec for doc-review agent (QA Validator in boardroom)
+  challenger/
+    AGENT.md                    # Task spec for adversarial challenger agent
+  boardroom_run.py              # Orchestrator for the Improvement Board cycle
+review-board.yaml               # Improvement Board config (roles, rules, process)
 Test                            # Integration test suite (bash)
 Benchmark                       # Latency, throughput, concurrency benchmarks (bash)
+.env                            # Non-sensitive config (TZ, XAI_MODEL, XAI_SEARCH_TOOLS)
+.env.example                    # Template for .env
+.secrets                        # API keys and tokens (gitignored, chmod 600)
+.secrets.example                # Template for .secrets
 logs/sessions/                  # Auto-generated per-request JSON session logs
 ```
 
@@ -156,6 +171,30 @@ grep -l '"route": "xai"' logs/sessions/*.json
 
 Logs auto-rotate: files older than 7 days or exceeding 5000 total are cleaned up automatically. Timestamps use the configured `TZ` timezone (default: `America/Los_Angeles`).
 
+## Improvement Board
+
+A lightweight governance layer over the self-improvement loop. Three agents run in sequence, with separation of powers borrowed from [AgentBoardroom](https://github.com/GixGosu/AgentBoardroom):
+
+| Role | Agent | Job |
+|------|-------|-----|
+| Session CEO | `agents/session-review/` | Analyze session logs, propose prompt improvements |
+| Adversarial Challenger | `agents/challenger/` | Critically evaluate every proposal for weaknesses and regression risk |
+| QA Validator | `agents/doc-review/` | Hard gate — verify consistency and issue PASS/FAIL |
+
+```bash
+make boardroom-review    # Run the full cycle
+```
+
+The pipeline is strictly sequential (CEO → Challenger → QA). No proposal reaches the QA gate without surviving adversarial challenge. Every cycle produces a decision lineage record in `logs/reviews/boardroom/`.
+
+Key rules (defined in `review-board.yaml`):
+- **Mandatory challenge**: every proposal must be adversarially reviewed
+- **No self-approval**: no role may approve its own output
+- **QA gate for edits**: prompt file changes require QA PASS
+- **Single round**: challenged proposals are blocked for this cycle, revisable next run
+
+The standalone agents still work independently: `make review` for session analysis with direct prompt edits, `make doc-review` for documentation accuracy checks.
+
 ## Configuration
 
 ### Timezone
@@ -181,7 +220,6 @@ These env vars control classification and enrichment behavior. Defaults work wel
 
 | Variable | Default | Description |
 |---|---|---|
-| `CLASSIFY_CONTEXT_BUDGET` | `2000` | Max chars of conversation history sent to classifier |
 | `XAI_MIN_MAX_TOKENS` | `16384` | Floor for max_tokens on xAI requests (prevents client low defaults) |
 | `VIRTUAL_MODEL` | `ai-router` | Model name exposed via `/v1/models` |
 
@@ -201,5 +239,6 @@ Run `make help` to see all available targets. Key ones:
 | `make benchmark` | Run latency/throughput/concurrency benchmarks |
 | `make review` | Run session-review agent on accumulated logs |
 | `make doc-review` | Run doc-review agent to check docs against code |
+| `make boardroom-review` | Run Improvement Board cycle (CEO → Challenger → QA) |
 | `make gpu` | Show GPU status |
 | `make clean-all` | Remove everything including model cache volumes |

@@ -13,5 +13,5 @@ ENRICH: Questions that require current events, recent news, real-time data, toda
 Examples: "What happened in the news today?", "What is the current price of Bitcoin?", "Who won the latest election?", "What are the newest features in Python 3.14?", "What is today's date?", "What day is it?", "Is the library open tomorrow?", "What's the schedule for next week?", "Tell me about the history of [specific school]", "What is [company name] known for?"
 
 User query: "{query}"
-
+{truncation_note}
 Respond with ONLY ONE WORD: SIMPLE, MODERATE, COMPLEX, or ENRICH

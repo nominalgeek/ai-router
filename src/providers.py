@@ -16,7 +16,6 @@ from src.config import (
     ROUTING_SYSTEM_PROMPT, ROUTING_PROMPT,
     ENRICHMENT_SYSTEM_PROMPT,
     XAI_SEARCH_TOOLS,
-    CLASSIFY_CONTEXT_BUDGET,
 )
 from src.session_logger import SessionLogger
 
@@ -78,35 +77,21 @@ def determine_route(messages: list, session: SessionLogger = None, date_ctx: str
                 session.set_route('meta', 'META', 0)
             return 'meta'
 
-    # Build a short conversation context for follow-up queries so the
-    # classifier can resolve references like "that school" or "it".
-    # Keep it brief for the Orchestrator 8B context window.
+    # Include prior conversation so the classifier can resolve references
+    # like "that school" or "it".  Both the classifier and primary now
+    # share the same 32K context window, so no truncation is needed.
     context_prefix = ''
     prior = messages[:-1]
     if prior:
-        # Walk backwards through prior messages, collecting the most
-        # recent turns until we hit a budget (~2000 chars ≈ 500 tokens).
-        # This keeps the classifier prompt safe for the 4B model while
-        # giving it enough context to resolve references.
-        budget = CLASSIFY_CONTEXT_BUDGET
         lines = []
-        for m in reversed(prior):
+        for m in prior:
             role = m.get('role', 'unknown')
             content = m.get('content', '')
             # Strip <details> reasoning tags so the classifier sees
             # the actual answer, not internal chain-of-thought
             content = re.sub(r'<details[^>]*>.*?</details>\s*', '', content, flags=re.DOTALL)
             content = content.strip()
-            line = f"{role}: {content}"
-            if len(line) > budget:
-                # Fit what we can from this message, then stop
-                lines.append(line[:budget] + '...')
-                break
-            lines.append(line)
-            budget -= len(line)
-            if budget <= 0:
-                break
-        lines.reverse()
+            lines.append(f"{role}: {content}")
         context_prefix = (
             "Recent conversation context (for resolving references):\n"
             + "\n".join(lines)
@@ -114,7 +99,9 @@ def determine_route(messages: list, session: SessionLogger = None, date_ctx: str
         )
 
     # Build routing classification prompt from external template
-    routing_prompt = context_prefix + ROUTING_PROMPT.format(query=last_message)
+    routing_prompt = context_prefix + ROUTING_PROMPT.format(
+        query=last_message, truncation_note=""
+    )
 
     classify_messages = [
         {"role": "system", "content": f"{date_ctx or date_context()}\n\n{ROUTING_SYSTEM_PROMPT}"},

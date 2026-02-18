@@ -10,6 +10,7 @@ Code SDK, and streaming progress to stdout.
 
 Usage:
     python agents/session-review/run.py [--model MODEL]
+    python agents/session-review/run.py --boardroom <report_path> [--model MODEL]
 
 Requires:
     - claude-code-sdk  (pip install claude-code-sdk)
@@ -47,11 +48,22 @@ def parse_args():
         default="sonnet",
         help="Claude model to use (default: sonnet)",
     )
+    parser.add_argument(
+        "--boardroom",
+        metavar="REPORT_PATH",
+        help="Run in boardroom mode — write proposals (not edits) to this report path",
+    )
     return parser.parse_args()
 
 
-async def run_review(model: str):
-    """Launch the session-review agent and stream progress to stdout."""
+async def run_review(model: str, boardroom_report: str | None = None):
+    """Launch the session-review agent and stream progress to stdout.
+
+    Args:
+        model: Claude model to use.
+        boardroom_report: If set, run in boardroom mode — the agent writes
+            proposals to this path instead of applying edits directly.
+    """
 
     if not AGENT_PROMPT.exists():
         print(f"Agent prompt not found: {AGENT_PROMPT}")
@@ -65,31 +77,44 @@ async def run_review(model: str):
 
     print(f"Session logs: {len(session_files)} files")
     print(f"App log: {'found' if app_log.exists() else 'not found'}")
+    print(f"Mode: {'boardroom' if boardroom_report else 'standalone'}")
     print(f"Model: {model}")
     print("---")
 
     prompt = AGENT_PROMPT.read_text()
 
-    # Tool permissions mirror what the agent spec in AGENT.md allows:
-    #   - Read/Glob/Grep: full project access (read-only exploration)
-    #   - Write: only to logs/reviews/ (report output)
-    #   - Edit: only config/prompts/** (safe prompt fixes per AGENT.md Step 4)
-    #   - Bash: only mkdir for the reviews directory
-    #
+    if boardroom_report:
+        # Boardroom mode: prepend the marker so the agent writes structured
+        # proposals instead of applying edits.  Also redirect report output
+        # to the boardroom directory.
+        prompt = (
+            f"BOARDROOM_MODE=true\n\n"
+            f"Write your report (with ## Proposals section) to: `{boardroom_report}`\n\n"
+            f"---\n\n{prompt}"
+        )
+
+    # Tool permissions mirror what the agent spec in AGENT.md allows.
+    # In boardroom mode, Edit is removed — proposals only, no direct edits.
+    allowed_tools = [
+        "Read",
+        "Glob",
+        "Grep",
+        "Task",
+        "Write(logs/reviews/*)",
+        "Bash(mkdir -p logs/reviews)",
+        "Bash(mkdir -p logs/reviews/boardroom)",
+    ]
+    if not boardroom_report:
+        # Standalone mode: allow direct prompt edits (AGENT.md Step 4)
+        allowed_tools.append("Edit(config/prompts/**)")
+
     # permission_mode="acceptEdits" auto-approves these without a TTY,
     # which is what makes this work headlessly from make/cron/CI.
     options = ClaudeCodeOptions(
         model=model,
         cwd=str(PROJECT_ROOT),
         permission_mode="acceptEdits",
-        allowed_tools=[
-            "Read",
-            "Glob",
-            "Grep",
-            "Write(logs/reviews/*)",
-            "Edit(config/prompts/**)",
-            "Bash(mkdir -p logs/reviews)",
-        ],
+        allowed_tools=allowed_tools,
     )
 
     async for message in query(prompt=prompt, options=options):
@@ -115,9 +140,18 @@ async def run_review(model: str):
 
 def main():
     args = parse_args()
-    success = asyncio.run(run_review(args.model))
+    success = asyncio.run(run_review(args.model, args.boardroom))
     sys.exit(0 if success else 1)
 
 
 if __name__ == "__main__":
-    main()
+    try:
+        main()
+    except KeyboardInterrupt:
+        pass
+    except RuntimeError as e:
+        if "Event loop is closed" not in str(e):
+            raise
+    except Exception as e:
+        print(f"Error: {e}", file=sys.stderr)
+        sys.exit(1)
