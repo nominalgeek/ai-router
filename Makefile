@@ -1,7 +1,7 @@
 .PHONY: help up down restart restart-all restart-gpu \
        logs logs-router logs-primary logs-ai \
        status health models gpu gpu-watch up-watch stats clean clean-logs clean-all backup restore \
-       venv test benchmark test-router test-primary pull update \
+       venv test benchmark test-router test-primary pull update download-models \
        shell-router shell-primary shell-ai validate network volumes prune review doc-review \
        boardroom-review
 
@@ -85,11 +85,10 @@ logs-ai: ## Follow logs for ai-router service
 
 status: ## Quick health check (one-line summary)
 	@r=$$(curl -sf http://localhost/health 2>/dev/null | jq -r '.status // "unreachable"'); \
-	 t=$$(curl -sf http://localhost:8080/api/overview >/dev/null 2>&1 && echo "up" || echo "down"); \
-	 if [ "$$r" = "healthy" ] && [ "$$t" = "up" ]; then \
+	 if [ "$$r" = "healthy" ]; then \
 	   echo "✅ All systems healthy"; \
 	 else \
-	   echo "⚠️  router=$$r traefik=$$t"; \
+	   echo "⚠️  router=$$r"; \
 	 fi
 
 health: ## Check health of all services (verbose)
@@ -106,8 +105,8 @@ health: ## Check health of all services (verbose)
 	@echo "Primary Model:"
 	@curl -s http://localhost/primary/health | jq . || echo "  ❌ Not responding"
 	@echo ""
-	@echo "Traefik Dashboard:"
-	@curl -s http://localhost:8080/api/overview | jq . || echo "  ❌ Not responding"
+	@echo "Traefik:"
+	@docker inspect --format='{{.State.Health.Status}}' traefik 2>/dev/null || echo "  ❌ Not running"
 
 models: ## List available models
 	@echo "=== Router Models ==="
@@ -233,6 +232,36 @@ pull: ## Pull latest images
 	$(COMPOSE) pull
 
 update: pull down up ## Update to latest images
+
+# Pinned model revisions — update these when changing models.
+# Must match the --revision flags in infra/docker-compose.yml.
+ROUTER_MODEL := cyankiwi/Nemotron-Orchestrator-8B-AWQ-4bit
+ROUTER_REVISION := 3dd3718ccfa74a972fb7c1e3318d04510af60077
+PRIMARY_MODEL := unsloth/NVIDIA-Nemotron-3-Nano-30B-A3B-NVFP4
+PRIMARY_REVISION := 15cd66826a7320801afd72701bbcf4ab85cb4005
+
+download-models: ## Pre-download models into hf-cache volume (requires HF_TOKEN in .secrets)
+	@echo "Downloading router model ($(ROUTER_MODEL)@$(ROUTER_REVISION))..."
+	@docker run --rm \
+		-v ai-router_hf-cache:/root/.cache/huggingface \
+		--env-file .secrets \
+		python:3.12-slim \
+		bash -c "pip install -q huggingface_hub && python -c \"\
+from huggingface_hub import snapshot_download; \
+import os; \
+snapshot_download('$(ROUTER_MODEL)', revision='$(ROUTER_REVISION)', token=os.environ.get('HF_TOKEN'))\""
+	@echo "✓ Router model downloaded"
+	@echo "Downloading primary model ($(PRIMARY_MODEL)@$(PRIMARY_REVISION))..."
+	@docker run --rm \
+		-v ai-router_hf-cache:/root/.cache/huggingface \
+		--env-file .secrets \
+		python:3.12-slim \
+		bash -c "pip install -q huggingface_hub && python -c \"\
+from huggingface_hub import snapshot_download; \
+import os; \
+snapshot_download('$(PRIMARY_MODEL)', revision='$(PRIMARY_REVISION)', token=os.environ.get('HF_TOKEN'))\""
+	@echo "✓ Primary model downloaded"
+	@echo "✓ All models pre-downloaded — vLLM containers can start in offline mode"
 
 shell-router: ## Open shell in router container
 	$(COMPOSE) exec router /bin/bash

@@ -5,24 +5,34 @@ services:
     image: traefik:v3.6
     container_name: traefik
     restart: unless-stopped
+    read_only: true
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    cap_add:
+      - NET_BIND_SERVICE  # Required: bind to port 80
     ports:
-      - "80:80"
-      - "8080:8080"  # Dashboard - secure this in production
+      - "127.0.0.1:80:80"  # Local only — external access via Cloudflare Tunnel
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock:ro
-      - ../traefik:/etc/traefik
+      - ../traefik:/etc/traefik:ro
     command:
-      - --log.level=INFO  # Changed from DEBUG for production
-      - --api.dashboard=true
-      - --api.insecure=true  # TODO: Add auth middleware in production
+      - --log.level=INFO
+      - --api.dashboard=false  # Disabled — no auth middleware available
       - --providers.docker=true
       - --providers.docker.exposedbydefault=false  # Explicit opt-in
       - --entrypoints.web.address=:80
     labels:
       - "traefik.enable=true"
-      - "traefik.http.routers.traefik.rule=Host(`traefik.local`)"
-      - "traefik.http.routers.traefik.service=api@internal"
-      - "traefik.http.routers.traefik.entrypoints=web"
+      # Security headers middleware — defense-in-depth behind the tunnel
+      - "traefik.http.middlewares.security-headers.headers.frameDeny=true"
+      - "traefik.http.middlewares.security-headers.headers.contentTypeNosniff=true"
+      - "traefik.http.middlewares.security-headers.headers.browserXssFilter=true"
+      - "traefik.http.middlewares.security-headers.headers.referrerPolicy=strict-origin-when-cross-origin"
+      # Rate limiting middleware — 100 req/s average, burst of 200
+      - "traefik.http.middlewares.rate-limit.ratelimit.average=100"
+      - "traefik.http.middlewares.rate-limit.ratelimit.burst=200"
     networks:
       - ai-network
 
@@ -52,21 +62,26 @@ services:
     container_name: ai-router
     restart: unless-stopped
     user: "1000:1000"
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
     command: bash -c "pip install --no-cache-dir --user -r requirements.txt && python router.py"
     volumes:
-      - ../router.py:/app/router.py
-      - ../src:/app/src
-      - ../requirements.txt:/app/requirements.txt
-      - ../config:/app/config
+      - ../router.py:/app/router.py:ro
+      - ../src:/app/src:ro
+      - ../requirements.txt:/app/requirements.txt:ro
+      - ../config:/app/config:ro
       - ../logs:/var/log/ai-router
     working_dir: /app
     environment:
       - HOME=/tmp
       - TZ=${TZ:-America/Los_Angeles}
-      - XAI_API_KEY=${XAI_API_KEY}
       - XAI_SEARCH_TOOLS=${XAI_SEARCH_TOOLS:-web_search,x_search}
       - ROUTER_URL=http://router:8001
       - PRIMARY_URL=http://primary:8000
+    secrets:
+      - xai_api_key
     depends_on:
       router:
         condition: service_healthy
@@ -84,8 +99,10 @@ services:
       - "traefik.http.routers.ai-router.entrypoints=web"
       - "traefik.http.routers.ai-router.service=ai-router"
       - "traefik.http.services.ai-router.loadbalancer.server.port=8002"
+      - "traefik.http.routers.ai-router.middlewares=security-headers@docker,rate-limit@docker"
     networks:
       - ai-network
+      - ai-internal  # Reaches vLLM containers on isolated network
 
   router:
     image: vllm/vllm-openai:latest
@@ -93,12 +110,19 @@ services:
     container_name: vllm-router
     restart: unless-stopped
     runtime: nvidia
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    tmpfs:
+      - /tmp:size=1G  # vLLM runtime scratch space
     environment:
       - LD_LIBRARY_PATH=/usr/lib/x86_64-linux-gnu
       - VLLM_USE_MODELSCOPE=false
-      - HF_TOKEN=${HF_TOKEN}
+      - HF_HUB_OFFLINE=1  # Never contact Hugging Face — models must be pre-downloaded
     command: >
       --model cyankiwi/Nemotron-Orchestrator-8B-AWQ-4bit
+      --revision 3dd3718ccfa74a972fb7c1e3318d04510af60077
       --dtype half
       --kv-cache-dtype fp8_e4m3
       --calculate-kv-scales
@@ -135,7 +159,7 @@ services:
       - "traefik.http.middlewares.router-stripprefix.stripprefix.prefixes=/router"
       - "traefik.http.routers.router.middlewares=router-stripprefix"
     networks:
-      - ai-network
+      - ai-internal
 
   primary:
     image: vllm/vllm-openai:latest
@@ -143,14 +167,21 @@ services:
     container_name: vllm-primary
     restart: unless-stopped
     runtime: nvidia
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    tmpfs:
+      - /tmp:size=2G  # vLLM runtime scratch space
     environment:
       - LD_LIBRARY_PATH=/usr/lib/x86_64-linux-gnu
       - VLLM_USE_MODELSCOPE=false
       - VLLM_USE_FLASHINFER_MOE_FP4=1
       - VLLM_FLASHINFER_MOE_BACKEND=throughput
-      - HF_TOKEN=${HF_TOKEN}
+      - HF_HUB_OFFLINE=1  # Never contact Hugging Face — models must be pre-downloaded
     command: >
       --model unsloth/NVIDIA-Nemotron-3-Nano-30B-A3B-NVFP4
+      --revision 15cd66826a7320801afd72701bbcf4ab85cb4005
       --kv-cache-dtype fp8
       --gpu-memory-utilization 0.65
       --max-model-len 32768
@@ -161,7 +192,7 @@ services:
       --reasoning-parser-plugin /app/nano_v3_reasoning_parser.py
       --reasoning-parser nano_v3
     volumes:
-      - ../nano_v3_reasoning_parser.py:/app/nano_v3_reasoning_parser.py
+      - ../nano_v3_reasoning_parser.py:/app/nano_v3_reasoning_parser.py:ro
       - hf-cache:/root/.cache/huggingface
     deploy:
       resources:
@@ -187,12 +218,19 @@ services:
       - "traefik.http.middlewares.primary-stripprefix.stripprefix.prefixes=/primary"
       - "traefik.http.routers.primary.middlewares=primary-stripprefix"
     networks:
-      - ai-network
+      - ai-internal
 
 networks:
   ai-network:
     driver: bridge
+  ai-internal:
+    driver: bridge
+    internal: true  # No internet access — vLLM containers are network-isolated
 
 volumes:
   hf-cache:
     driver: local
+
+secrets:
+  xai_api_key:
+    environment: XAI_API_KEY  # Reads from env (sourced via --env-file .secrets)
