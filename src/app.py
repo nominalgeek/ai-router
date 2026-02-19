@@ -1,5 +1,6 @@
 """Flask application and route handlers."""
 
+import hmac
 import json
 import time
 from concurrent.futures import ThreadPoolExecutor
@@ -57,7 +58,7 @@ def require_api_key():
         return  # Public endpoints skip auth
 
     auth = request.headers.get('Authorization', '')
-    if auth == f'Bearer {API_KEY}':
+    if hmac.compare_digest(auth, f'Bearer {API_KEY}'):
         return  # Valid key
 
     logger.warning(f"Unauthorized request to {request.path} from {request.remote_addr}")
