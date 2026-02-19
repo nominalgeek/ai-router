@@ -6,7 +6,7 @@ This directory contains Docker Compose service definitions and supporting docume
 
 | File | Purpose |
 |------|---------|
-| `docker-compose.yml` | Service definitions for traefik, ai-router, vllm-router, vllm-primary |
+| `docker-compose.yml` | Service definitions for traefik, cloudflared, ai-router, vllm-router, vllm-primary |
 | `vram-requirements.md` | How to calculate VRAM needs (weights, KV cache, overhead) |
 | `vllm-flags.md` | Explanation of every vLLM flag used in the compose file |
 
@@ -49,5 +49,6 @@ Before changing memory utilization or context lengths, verify the new values fit
 - **Model names** — Changing models affects the entire routing system (prompts, classification quality, response format). The reasoning parser plugin is model-specific.
 - **Port mappings** — The ai-router Flask app, Traefik labels, and test scripts all reference these ports.
 - **Network topology** — The `ai-network` bridge and service names are referenced across `Makefile`, `src/config.py`, and test scripts.
+- **Cloudflare Tunnel** — The `cloudflared` service provides secure ingress via Cloudflare's edge. Changes to its configuration affect external access. The tunnel token (`CF_TUNNEL_TOKEN`) lives in `.secrets`; public hostname routing is configured in the Cloudflare Zero Trust dashboard, not in this repo. See `docs/cloudflare-tunnel-setup.md`.
 - **Container names** — Referenced by health checks, Makefile targets, and monitoring scripts.
 - **Docker image versions** — Currently `vllm/vllm-openai:latest`. Pinning to a specific version requires testing; vLLM releases can change flag behavior.

@@ -26,6 +26,27 @@ services:
     networks:
       - ai-network
 
+  cloudflared:
+    image: cloudflare/cloudflared:2025.2.1
+    container_name: cloudflared
+    restart: unless-stopped
+    read_only: true
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    environment:
+      - TUNNEL_TOKEN=${CF_TUNNEL_TOKEN}
+    command: tunnel run
+    depends_on:
+      - traefik
+    deploy:
+      resources:
+        limits:
+          memory: 256M
+    networks:
+      - ai-network
+
   ai-router:
     image: python:3.12-slim
     container_name: ai-router

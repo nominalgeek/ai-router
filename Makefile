@@ -26,8 +26,8 @@ $(VENV_DIR)/bin/activate: requirements.txt
 	@echo "Activate with: source $(VENV_DIR)/bin/activate"
 
 up: ## Start all services (sequential GPU startup to avoid VRAM conflicts)
-	@echo "Starting traefik..."
-	$(COMPOSE) up -d traefik
+	@echo "Starting traefik and cloudflared..."
+	$(COMPOSE) up -d traefik cloudflared
 	@echo "Starting router model (small, loads first)..."
 	$(COMPOSE) up -d router
 	@echo "Waiting for router to be healthy..."
@@ -141,8 +141,8 @@ up-watch: ## Start all services while logging VRAM to logs/vram-startup.log
 	   done ) > logs/vram-startup.log 2>&1 & \
 	WATCH_PID=$$!; \
 	echo "  monitor PID: $$WATCH_PID"; \
-	echo "Starting traefik..."; \
-	$(COMPOSE) up -d traefik; \
+	echo "Starting traefik and cloudflared..."; \
+	$(COMPOSE) up -d traefik cloudflared; \
 	echo "Starting router model (small, loads first)..."; \
 	$(COMPOSE) up -d router; \
 	echo "Waiting for router to be healthy..."; \
