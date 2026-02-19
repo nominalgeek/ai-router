@@ -28,7 +28,28 @@ logger.addHandler(_file_handler)
 # Model endpoints
 ROUTER_URL = os.getenv('ROUTER_URL', 'http://router:8001')
 PRIMARY_URL = os.getenv('PRIMARY_URL', 'http://primary:8000')
-XAI_API_KEY = os.getenv('XAI_API_KEY', '')
+def read_secret(name, default=''):
+    """Read a secret from a Docker secret file, falling back to env var.
+
+    Docker secrets are mounted as files under /run/secrets/. This lets
+    sensitive values stay out of environment variables (which are visible
+    via `docker inspect`).  When running outside Docker (e.g. local dev),
+    the env var fallback keeps things working transparently.
+    """
+    secret_path = f'/run/secrets/{name.lower()}'
+    try:
+        with open(secret_path, 'r') as f:
+            value = f.read().strip()
+            if value:
+                logger.info(f"Loaded secret '{name}' from {secret_path}")
+                return value
+    except FileNotFoundError:
+        pass
+    return os.getenv(name, default)
+
+
+XAI_API_KEY = read_secret('XAI_API_KEY')
+API_KEY = read_secret('API_KEY')
 XAI_API_URL = 'https://api.x.ai'  # Base URL without /v1
 # Available models: grok-4-1-fast-non-reasoning, grok-4-1-fast-reasoning, grok-code-fast-1
 XAI_MODEL = os.getenv('XAI_MODEL', 'grok-4-1-fast-reasoning')

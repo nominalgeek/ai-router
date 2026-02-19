@@ -6,7 +6,7 @@ This directory contains Docker Compose service definitions and supporting docume
 
 | File | Purpose |
 |------|---------|
-| `docker-compose.yml` | Service definitions for traefik, ai-router, vllm-router, vllm-primary |
+| `docker-compose.yml` | Service definitions for traefik, cloudflared, ai-router, vllm-router, vllm-primary |
 | `vram-requirements.md` | How to calculate VRAM needs (weights, KV cache, overhead) |
 | `vllm-flags.md` | Explanation of every vLLM flag used in the compose file |
 
@@ -44,10 +44,58 @@ Total GPU memory: 96 GB. Current allocation:
 
 Before changing memory utilization or context lengths, verify the new values fit using the formulas in `vram-requirements.md`. The key constraint: both containers plus CUDA overhead must fit in 96 GB.
 
+## Container security
+
+All containers are hardened with a defense-in-depth approach:
+
+| Control | traefik | cloudflared | ai-router | vllm-router | vllm-primary |
+|---------|---------|-------------|-----------|-------------|--------------|
+| `cap_drop: ALL` | yes | yes | yes | yes | yes |
+| `cap_add` | `NET_BIND_SERVICE` | — | — | — | — |
+| `no-new-privileges` | yes | yes | yes | yes | yes |
+| `read_only` | yes | yes | — | — | — |
+| `tmpfs` | — | — | — | `/tmp:1G` | `/tmp:2G` |
+| Non-root user | — | — | `1000:1000` | — | — |
+| Volume mounts `:ro` | `/etc/traefik` | — | source, config | parser plugin | — |
+
+**Docker secrets**: `XAI_API_KEY` and `API_KEY` are mounted as files under `/run/secrets/` via compose secrets (sourced from env vars in `--env-file .secrets`). The `read_secret()` helper in `src/config.py` reads from the file first, falling back to `os.environ` for local dev.
+
+## API key authentication
+
+The ai-router requires a valid API key for all protected endpoints (`/v1/*`, `/api/*`). Public endpoints (`/health`, `/`, `/stats`) are open for healthchecks and monitoring.
+
+Clients send the key via the standard `Authorization: Bearer <key>` header — the same header OpenAI-compatible clients like Open WebUI send natively. When `API_KEY` is not configured (empty), authentication is disabled for local development.
+
+The key lives in `.secrets` as `API_KEY` and is delivered to the container via Docker secrets. Generate one with: `python3 -c "import secrets; print(secrets.token_urlsafe(32))"`
+
+**Traefik security middlewares** (applied to ai-router route via Docker labels):
+- `security-headers` — `frameDeny`, `contentTypeNosniff`, `browserXssFilter`, `referrerPolicy`
+- `rate-limit` — 100 req/s average, burst 200
+
+**Traefik dashboard** is disabled (`--api.dashboard=false`). Port 80 is bound to `127.0.0.1` only — external access flows through the Cloudflare Tunnel.
+
+**vLLM containers run as root** because vLLM's internal processes expect write access to `/root/.cache`. The `cap_drop: ALL` + `no-new-privileges` combination limits what root can do inside the container. `tmpfs` mounts provide writable scratch space without persisting to disk.
+
+## trust-remote-code mitigations
+
+Both vLLM containers use `--trust-remote-code`, which executes arbitrary Python from the model's Hugging Face repo. Four layered mitigations reduce this risk:
+
+1. **Pinned revisions** — `--revision <sha>` locks each model to a specific commit. The SHAs are defined in both `docker-compose.yml` (vLLM flags) and `Makefile` (download target). They must match.
+2. **Pre-download** — `make download-models` pulls models into the `hf-cache` volume via a one-shot container *before* vLLM starts. This makes the download step explicit, auditable, and separate from inference.
+3. **Offline mode** — `HF_HUB_OFFLINE=1` prevents vLLM from contacting Hugging Face at runtime. If the model isn't in the cache, it fails loudly instead of silently downloading.
+4. **Network isolation** — vLLM containers are on `ai-internal`, a Docker network with `internal: true` (no internet gateway). Even if `HF_HUB_OFFLINE` were bypassed, the containers cannot reach external hosts.
+
+**To update a model revision:**
+1. Update the SHA in both `Makefile` (variables) and `docker-compose.yml` (`--revision` flag)
+2. Run `make download-models` to fetch the new revision
+3. Restart the affected vLLM container
+
 ## Do not change without human review
 
 - **Model names** — Changing models affects the entire routing system (prompts, classification quality, response format). The reasoning parser plugin is model-specific.
+- **Model revision SHAs** — Pinned in both `docker-compose.yml` and `Makefile`. Must be updated together. See "trust-remote-code mitigations" above.
 - **Port mappings** — The ai-router Flask app, Traefik labels, and test scripts all reference these ports.
-- **Network topology** — The `ai-network` bridge and service names are referenced across `Makefile`, `src/config.py`, and test scripts.
+- **Network topology** — Two networks: `ai-network` (Traefik, cloudflared, ai-router) and `ai-internal` (vLLM containers, ai-router). The ai-router bridges both. Service names are referenced across `Makefile`, `src/config.py`, and test scripts.
+- **Cloudflare Tunnel** — The `cloudflared` service provides secure ingress via Cloudflare's edge. Changes to its configuration affect external access. The tunnel token (`CF_TUNNEL_TOKEN`) lives in `.secrets`; public hostname routing is configured in the Cloudflare Zero Trust dashboard, not in this repo. See `docs/cloudflare-tunnel-setup.md`.
 - **Container names** — Referenced by health checks, Makefile targets, and monitoring scripts.
 - **Docker image versions** — Currently `vllm/vllm-openai:latest`. Pinning to a specific version requires testing; vLLM releases can change flag behavior.

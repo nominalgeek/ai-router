@@ -1,9 +1,11 @@
 """Flask application and route handlers."""
 
+import hmac
 import json
 import time
 from concurrent.futures import ThreadPoolExecutor
 from flask import Flask, request, jsonify, Response
+from werkzeug.middleware.proxy_fix import ProxyFix
 import requests
 
 from src.config import (
@@ -15,6 +17,7 @@ from src.config import (
     ENRICHMENT_INJECTION_PROMPT,
     META_SYSTEM_PROMPT,
     XAI_MIN_MAX_TOKENS,
+    API_KEY,
 )
 from src.session_logger import SessionLogger
 from src.providers import (
@@ -26,6 +29,41 @@ from src.providers import (
 )
 
 app = Flask(__name__)
+
+# Trust proxy headers from traefik (and cloudflared behind it).
+# x_for=2: two proxies in the chain (cloudflared → traefik → app).
+# This makes request.remote_addr return the real client IP instead of
+# the Docker bridge IP.
+app.wsgi_app = ProxyFix(app.wsgi_app, x_for=2, x_proto=1, x_host=1)
+
+# Paths that don't require API key authentication.
+# /health is needed by Docker healthchecks and monitoring.
+# / and /stats are informational endpoints with no sensitive data.
+_PUBLIC_PATHS = frozenset(['/', '/health', '/stats'])
+
+
+@app.before_request
+def require_api_key():
+    """Reject requests to protected endpoints without a valid API key.
+
+    Checks the standard Authorization: Bearer <key> header, which is what
+    OpenAI-compatible clients (including Open WebUI) send natively.
+    When API_KEY is empty (not configured), authentication is disabled
+    so the router works out of the box for local development.
+    """
+    if not API_KEY:
+        return  # No key configured — open access (local dev)
+
+    if request.path in _PUBLIC_PATHS:
+        return  # Public endpoints skip auth
+
+    auth = request.headers.get('Authorization', '')
+    if hmac.compare_digest(auth, f'Bearer {API_KEY}'):
+        return  # Valid key
+
+    logger.warning(f"Unauthorized request to {request.path} from {request.remote_addr}")
+    return jsonify({'error': 'Unauthorized', 'message': 'Invalid or missing API key'}), 401
+
 
 # Requests slower than this threshold (ms) get a WARNING-level log line.
 # Per-route: primary routes should be fast; xai/enrich are inherently slower.
@@ -58,8 +96,9 @@ def _log_request_summary(session):
         if s.get('step') == 'enrichment'
     )
 
+    client_ip = d.get('client_ip', '-')
     parts = [
-        f"REQUEST session={d['id']} route={route} classification_ms={classify_ms}",
+        f"REQUEST session={d['id']} client={client_ip} route={route} classification_ms={classify_ms}",
     ]
     if enrich_ms:
         parts.append(f"enrichment_ms={enrich_ms}")
@@ -366,12 +405,13 @@ def chat_completions():
             }), 400
 
         session.set_query(data['messages'])
+        session.data['client_ip'] = request.remote_addr
 
         # Log request context size for latency correlation
         msg_count = len(data['messages'])
         total_chars = sum(len(m.get('content', '')) for m in data['messages'])
         is_stream = data.get('stream', False)
-        logger.info(f"Incoming request: messages={msg_count} total_chars={total_chars} stream={is_stream}")
+        logger.info(f"Incoming request: client={request.remote_addr} messages={msg_count} total_chars={total_chars} stream={is_stream}")
 
         # Compute temporal context once for the entire request pipeline
         date_ctx = date_context()

@@ -93,13 +93,14 @@ config/prompts/
     system.md                   # Meta pipeline system prompt
 infra/
   CLAUDE.md                     # Infrastructure guardrails (VRAM budget, restart rules)
-  docker-compose.yml            # All services: traefik, ai-router, vllm-router, vllm-primary
+  docker-compose.yml            # All services: traefik, cloudflared, ai-router, vllm-router, vllm-primary
   vram-requirements.md          # VRAM calculation guide (weights, KV cache, overhead)
   vllm-flags.md                 # Explanation of every vLLM flag in the compose file
 Makefile                        # Common operations (up, down, test, health, etc.)
 traefik/                        # Traefik reverse proxy config
 docs/
   architecture.md               # Mermaid architecture diagrams
+  cloudflare-tunnel-setup.md    # Cloudflare Tunnel + Zero Trust setup guide
 agents/
   session-review/
     AGENT.md                    # Task spec for session-review agent (Session CEO in boardroom)
@@ -184,6 +185,7 @@ Each session file contains:
 |-------|-------------------|
 | `id` | Unique session identifier (8-char hex) |
 | `timestamp` | ISO 8601 timestamp of the request |
+| `client_ip` | Client's real IP address (resolved via proxy headers) |
 | `user_query` | The original user message (truncated to 500 chars) |
 | `client_messages` | Full original messages array from the client |
 | `route` | Which route was chosen (`primary`, `xai`, `enrich`, `meta`) |
