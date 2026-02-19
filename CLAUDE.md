@@ -185,6 +185,7 @@ Each session file contains:
 |-------|-------------------|
 | `id` | Unique session identifier (8-char hex) |
 | `timestamp` | ISO 8601 timestamp of the request |
+| `client_ip` | Client's real IP address (resolved via proxy headers) |
 | `user_query` | The original user message (truncated to 500 chars) |
 | `client_messages` | Full original messages array from the client |
 | `route` | Which route was chosen (`primary`, `xai`, `enrich`, `meta`) |

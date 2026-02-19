@@ -58,7 +58,15 @@ All containers are hardened with a defense-in-depth approach:
 | Non-root user | — | — | `1000:1000` | — | — |
 | Volume mounts `:ro` | `/etc/traefik` | — | source, config | parser plugin | — |
 
-**Docker secrets**: `XAI_API_KEY` is mounted as a file at `/run/secrets/xai_api_key` via compose secrets (sourced from the `XAI_API_KEY` env var, which comes from `--env-file .secrets`). The `read_secret()` helper in `src/config.py` reads from the file first, falling back to `os.environ` for local dev.
+**Docker secrets**: `XAI_API_KEY` and `API_KEY` are mounted as files under `/run/secrets/` via compose secrets (sourced from env vars in `--env-file .secrets`). The `read_secret()` helper in `src/config.py` reads from the file first, falling back to `os.environ` for local dev.
+
+## API key authentication
+
+The ai-router requires a valid API key for all protected endpoints (`/v1/*`, `/api/*`). Public endpoints (`/health`, `/`, `/stats`) are open for healthchecks and monitoring.
+
+Clients send the key via the standard `Authorization: Bearer <key>` header — the same header OpenAI-compatible clients like Open WebUI send natively. When `API_KEY` is not configured (empty), authentication is disabled for local development.
+
+The key lives in `.secrets` as `API_KEY` and is delivered to the container via Docker secrets. Generate one with: `python3 -c "import secrets; print(secrets.token_urlsafe(32))"`
 
 **Traefik security middlewares** (applied to ai-router route via Docker labels):
 - `security-headers` — `frameDeny`, `contentTypeNosniff`, `browserXssFilter`, `referrerPolicy`

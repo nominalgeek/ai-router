@@ -50,6 +50,7 @@ Session logs are JSON files in `logs/sessions/`, one per request. Each contains:
 ```
 id                  — unique session ID
 timestamp           — when the request arrived
+client_ip           — client's real IP address (resolved via proxy headers)
 user_query          — the original user message (truncated to 500 chars)
 client_messages     — full original message array from the client
 route               — which route was chosen (primary, xai, enrich, meta)

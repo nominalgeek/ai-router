@@ -49,6 +49,7 @@ def read_secret(name, default=''):
 
 
 XAI_API_KEY = read_secret('XAI_API_KEY')
+API_KEY = read_secret('API_KEY')
 XAI_API_URL = 'https://api.x.ai'  # Base URL without /v1
 # Available models: grok-4-1-fast-non-reasoning, grok-4-1-fast-reasoning, grok-code-fast-1
 XAI_MODEL = os.getenv('XAI_MODEL', 'grok-4-1-fast-reasoning')

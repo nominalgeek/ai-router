@@ -33,6 +33,7 @@ class SessionLogger:
         self.data = {
             'id': self.id,
             'timestamp': self.timestamp.isoformat(timespec='milliseconds'),
+            'client_ip': None,
             'user_query': None,
             'client_messages': None,
             'route': None,

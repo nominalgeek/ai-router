@@ -82,6 +82,7 @@ services:
       - PRIMARY_URL=http://primary:8000
     secrets:
       - xai_api_key
+      - api_key
     depends_on:
       router:
         condition: service_healthy
@@ -235,3 +236,5 @@ volumes:
 secrets:
   xai_api_key:
     environment: XAI_API_KEY  # Reads from env (sourced via --env-file .secrets)
+  api_key:
+    environment: API_KEY  # Reads from env (sourced via --env-file .secrets)
