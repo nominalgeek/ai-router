@@ -43,14 +43,16 @@ roles:
     responsibilities:
       - "Analyze session logs in logs/sessions/ and logs/app.log"
       - "Identify misclassifications, enrichment failures, latency outliers"
+      - "Identify code-level issues (e.g., error handling gaps, logging blind spots, forwarding bugs) and propose scoped Python diffs with rationale"
       - "Propose specific, scoped prompt edits with rationale and evidence"
     outputs:
       # The CEO writes its review report as before, PLUS a structured
       # proposals section that the Challenger can evaluate.
       report: "logs/reviews/boardroom/{timestamp}_ceo_report.md"
     constraints:
-      - "May NOT apply prompt edits directly — proposals only"
+      - "May NOT apply prompt edits or code changes directly — proposals only"
       - "Every proposal must cite 3+ session IDs as evidence"
+      - "Code proposals must also cite the specific src/ file, function, and line range affected"
       - "One proposal per misclassification pattern (no bundling)"
 
   # --- Adversarial Challenger ---
@@ -77,6 +79,8 @@ roles:
       - "Critically evaluate every CEO proposal for logical weaknesses"
       - "Check whether cited evidence actually supports the conclusion"
       - "Identify potential regressions the proposed change could cause"
+      - "For code proposals: verify the diff preserves boundary contracts (config.py, providers.py, app.py, session_logger.py)"
+      - "For code proposals: verify the diff does not introduce cross-boundary coupling or violate separation of concerns per src/CLAUDE.md"
       - "Verify the fix respects architectural boundaries (classifier vs. generator)"
     inputs:
       # Reads the CEO's report and proposals, plus the same session logs
@@ -108,6 +112,9 @@ roles:
     responsibilities:
       - "Verify ACCEPTED proposals won't break documentation consistency"
       - "Run a quick benchmark check (make benchmark) if prompt files changed"
+      - "For code proposals: run the test suite (make test) and verify it passes"
+      - "For code proposals: verify the diff is syntactically valid Python (python -m py_compile)"
+      - "For code proposals: verify no new imports, env vars, or external dependencies are introduced without explicit justification"
       - "Issue a final PASS or FAIL verdict on the improvement cycle"
     inputs:
       ceo_report: "logs/reviews/boardroom/{timestamp}_ceo_report.md"
@@ -121,6 +128,7 @@ roles:
       - "May NOT modify proposals or suggest alternatives"
       - "FAIL verdict requires specific reason (not just 'looks risky')"
       - "Benchmark check is advisory — a FAIL requires a concrete regression"
+      - "Code proposal PASS means 'ready for human review' — code is NEVER auto-applied"
 
 
 # ---------------------------------------------------------------------------
@@ -206,12 +214,37 @@ rules:
     - "config/prompts/primary/system.md"
     - "config/prompts/meta/system.md"
 
+  # --- Code files the board may propose diffs for (never auto-applied) ---
+  # These require stricter scrutiny than prompt edits:
+  #   - Challenger must verify boundary contracts and separation of concerns
+  #   - QA must run make test and py_compile validation
+  #   - QA PASS means "ready for human review," NOT "apply automatically"
+  # Human applies the diff manually after reviewing the full decision record.
+  proposable_code_files:
+    - "src/app.py"
+    - "src/providers.py"
+    - "src/config.py"
+    - "src/session_logger.py"
+
   # --- Protected files (no agent may modify) ---
   protected_files:
-    - "src/*.py"
     - "infra/docker-compose.yml"
     - "Makefile"
     - "review-board.yaml"  # The board cannot modify its own rules
+    - "src/__init__.py"    # No logic — keep out of scope
+
+  # --- Code proposal rules (separate from prompt edit rules) ---
+  code_proposal_rules:
+    # Code is never auto-applied, even after QA PASS.
+    # The decision record contains the proposed diff; a human applies it.
+    auto_apply: false
+    # Each code proposal must affect exactly one file and one boundary.
+    single_boundary_per_proposal: true
+    # Code proposals may not add new files, only modify existing ones.
+    no_new_files: true
+    # Code proposals may not modify imports or dependencies without
+    # explicit justification in the proposal rationale.
+    import_change_requires_justification: true
 
 
 # ---------------------------------------------------------------------------

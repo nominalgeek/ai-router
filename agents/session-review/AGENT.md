@@ -164,6 +164,29 @@ Do NOT edit any prompt files. Instead, append a `## Proposals` section to your r
 
 Each proposal must be independent (one pattern per proposal, no bundling). The Adversarial Challenger will evaluate each one separately.
 
+##### Code proposals (boardroom mode only)
+
+If session logs reveal issues traceable to Python code (e.g., error handling gaps, logging blind spots, forwarding bugs), you may propose diffs to files listed in `proposable_code_files` in `review-board.yaml`. Code proposals use a stricter format:
+
+```markdown
+### Proposal N: [One-line summary]
+**Problem**: [What code-level issue you identified]
+**Evidence**: [Session IDs — minimum 3 required]
+**Target file**: [Which src/*.py file — must be in proposable_code_files]
+**Function/line range**: [e.g., `providers.py:classify_request(), lines 45-62`]
+**Boundary affected**: [Configuration | Providers | Routing | Logging — exactly one]
+**Proposed edit**:
+\`\`\`diff
+- [line to remove or change]
++ [line to add or replace]
+\`\`\`
+**Rationale**: [Why this edit fixes the problem. Must explain how boundary contracts from src/CLAUDE.md are preserved.]
+**Risk assessment**: [What other code paths might be affected. Must address separation of concerns.]
+**Import/dependency changes**: [None | List any new imports with justification]
+```
+
+Code proposals are **never auto-applied** — even after QA PASS, a human reviews and applies the diff manually. Each code proposal must affect exactly one file and one boundary. You may not propose new files, only modifications to existing ones.
+
 #### Standalone mode (default)
 
 If you identify **clear, unambiguous** prompt improvements, you may edit the prompt templates directly. Only do this when:

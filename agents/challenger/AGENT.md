@@ -78,6 +78,16 @@ For each proposal, assess these dimensions:
 - Is the fix proportional to the problem? A single misclassification doesn't justify rewriting the routing prompt.
 - Is the edit additive (adding an example or clarification) rather than destructive (removing or restructuring)?
 
+#### Code-specific checks (for proposals targeting `proposable_code_files`)
+
+If the proposal targets a `src/*.py` file, apply these additional checks on top of the standard dimensions above:
+
+- **Boundary contract preservation**: Read `src/CLAUDE.md` and verify the diff maintains the contract for the affected boundary (Configuration, Providers, Routing, or Logging). The proposal must affect exactly one boundary — if it crosses boundaries, CHALLENGE it.
+- **Cross-boundary coupling**: Does the diff introduce imports, function calls, or data flow that crosses the four boundaries defined in `src/CLAUDE.md`? New coupling between boundaries is a CHALLENGE signal.
+- **Observability impact**: Does the diff maintain or improve logging and session-log coverage? A change that removes or weakens observability (fewer log lines, missing session fields, swallowed errors) without justification should be CHALLENGED.
+- **No-Facades Rule**: Per `AI_OPERATOR_PROFILE.md` §3, does the diff introduce any behavior that could make the system appear correct when it isn't? Silent fallbacks, stubbed success paths, or catch-all exception swallowing are CHALLENGE signals.
+- **Import/dependency changes**: If the diff adds new imports or dependencies, verify the proposal includes explicit justification. Unjustified dependency changes are a CHALLENGE signal.
+
 ### Step 4: Assign Verdicts
 
 Each proposal gets exactly one verdict:
