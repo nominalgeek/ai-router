@@ -85,6 +85,11 @@ XAI_SEARCH_TOOLS = os.getenv('XAI_SEARCH_TOOLS', 'web_search,x_search')
 # default (often 100-300 from Open WebUI) truncates substantive answers.
 XAI_MIN_MAX_TOKENS = int(os.getenv('XAI_MIN_MAX_TOKENS', '16384'))
 
+# Whether to write session log files for meta-pipeline requests (title generation,
+# follow-up suggestions, summaries).  These are high-volume, low-signal requests
+# from Open WebUI that clutter the session log directory.  Default: disabled.
+LOG_META_SESSIONS = os.getenv('LOG_META_SESSIONS', 'false').lower() in ('true', '1', 'yes')
+
 # Timezone configuration (defaults to US Pacific / Happy Valley, OR)
 LOCAL_TZ = ZoneInfo(os.getenv('TZ', 'America/Los_Angeles'))
 

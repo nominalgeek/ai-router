@@ -30,13 +30,37 @@ from pathlib import Path
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
 AGENTS_DIR = PROJECT_ROOT / "agents"
 BOARDROOM_DIR = PROJECT_ROOT / "logs" / "reviews" / "boardroom"
+STATE_FILE = BOARDROOM_DIR / "state.json"
+
+# Default state for the first run (no previous sessions reviewed)
+DEFAULT_STATE = {
+    "last_app_log_line": 0,
+    "last_session_ts": None,
+    "required_sessions": [],
+}
 
 
 def parse_args():
     parser = argparse.ArgumentParser(description="Run the Improvement Board cycle")
-    parser.add_argument("--model", default="claude-opus-4-6", help="Claude model (default: sonnet)")
+    parser.add_argument("--model", default="claude-sonnet-4-6", help="Claude model (default: sonnet)")
     parser.add_argument("--ceo-model", default="claude-opus-4-6", help="Model for Session CEO (default: opus)")
     return parser.parse_args()
+
+
+def load_state() -> dict:
+    """Load the incremental review state, or return defaults for the first run."""
+    if STATE_FILE.exists():
+        try:
+            return json.loads(STATE_FILE.read_text())
+        except (json.JSONDecodeError, OSError) as e:
+            print(f"Warning: could not read {STATE_FILE}, starting fresh: {e}")
+    return dict(DEFAULT_STATE)
+
+
+def save_state(state: dict):
+    """Persist the review state so the next run only processes new logs."""
+    STATE_FILE.write_text(json.dumps(state, indent=2) + "\n")
+    print(f"State saved: {STATE_FILE}")
 
 
 def next_record_id() -> str:
@@ -88,20 +112,35 @@ def main():
     reports = {"ceo": ceo_report, "challenger": challenger_report, "qa": qa_report}
     record_id = next_record_id()
 
+    # --- Load incremental review state ---
+    # The CEO agent uses this to skip already-reviewed sessions and log lines.
+    state = load_state()
+    print(f"Review state: last_session_ts={state['last_session_ts']}, "
+          f"last_app_log_line={state['last_app_log_line']}, "
+          f"required_sessions={len(state.get('required_sessions', []))} pending")
+
     # --- Step 1: Session CEO ---
     # The existing session-review runner reads AGENT.md as its prompt.
     # For boardroom mode, we call it with --boardroom which prepends the
     # BOARDROOM_MODE=true marker and redirects output to the boardroom dir.
+    # --state passes the incremental review state so the agent only reads new logs.
     ceo_ok = run_agent(
         "Session CEO — analyzing logs",
         str(AGENTS_DIR / "session-review" / "run.py"),
-        ["--boardroom", ceo_report],
+        ["--boardroom", ceo_report, "--state", str(STATE_FILE)],
         args.ceo_model,
     )
     if not ceo_ok:
         write_lineage(record_id, ts, reports, "ceo_failed")
-        print("\nCEO agent failed — cycle halted.")
+        print("\nCEO agent failed — cycle halted (state NOT updated).")
         sys.exit(1)
+
+    # --- Update state after successful CEO run ---
+    # The CEO agent writes updated state to state.json as its last action.
+    # We reload it here to confirm it was written (and to log the new values).
+    updated_state = load_state()
+    print(f"State after CEO: last_session_ts={updated_state['last_session_ts']}, "
+          f"last_app_log_line={updated_state['last_app_log_line']}")
 
     # --- Step 2: Adversarial Challenger ---
     challenger_ok = run_agent(

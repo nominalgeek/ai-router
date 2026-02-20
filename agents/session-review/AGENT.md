@@ -38,6 +38,16 @@ Review session logs in `logs/sessions/` and produce a structured report. You may
 
 ### Step 1: Load and Analyze Logs
 
+#### Incremental review (boardroom mode)
+
+If your prompt includes an **Incremental Review State** section, follow its instructions:
+- **Session logs**: Only read files with timestamps *after* `last_session_ts` (compare the `timestamp` field inside each JSON). If `last_session_ts` is null, read all available sessions.
+- **App log**: Only read lines *after* `last_app_log_line`. Use the Read tool with an `offset` parameter to skip already-reviewed lines.
+- **Required sessions**: If `required_sessions` lists any session IDs, read those specific files regardless of timestamp (a previous boardroom decision flagged them for re-review).
+- **After you finish**: Update the state file (path given in the state section) with the newest session timestamp you reviewed, the last app.log line number you read, and an empty `required_sessions` array.
+
+In standalone mode (no state section), read everything as before.
+
 #### Application log
 
 The Flask application writes a rotating log to `logs/app.log`. This contains timestamped INFO/WARNING/ERROR messages from the routing pipeline — classification decisions, max_tokens adjustments, enrichment pipeline events, errors, and startup diagnostics. Read this file first to get an overview of recent activity, then cross-reference specific entries with the session JSONs below.
@@ -70,7 +80,7 @@ total_ms            — end-to-end request time
 error               — error message if failed, null otherwise
 ```
 
-Read ALL session log files from `logs/sessions/`. Use glob to find them, then read each one. Do not sample — review every file.
+In standalone mode, read ALL session log files from `logs/sessions/`. In boardroom mode with incremental state, read only the files that are newer than `last_session_ts` or listed in `required_sessions` (see "Incremental review" above). Use glob to find them, then read each one. Do not sample — review every file that falls within your scope.
 
 ### Step 2: Identify Issues
 

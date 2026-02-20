@@ -18,6 +18,7 @@ from src.config import (
     META_SYSTEM_PROMPT,
     XAI_MIN_MAX_TOKENS,
     API_KEY,
+    LOG_META_SESSIONS,
 )
 from src.session_logger import SessionLogger
 from src.providers import (
@@ -354,7 +355,8 @@ def _handle_meta(data, session, date_ctx):
     result = forward_request(PRIMARY_URL, '/v1/chat/completions', data, 'primary',
                              session=session, date_ctx=date_ctx)
     _log_request_summary(session)
-    session.save()
+    if LOG_META_SESSIONS:
+        session.save()
     return result
 
 
