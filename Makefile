@@ -100,7 +100,7 @@ health: ## Check health of all services (verbose)
 	@curl -s http://localhost/health | jq . || echo "  ❌ Not responding"
 	@echo ""
 	@echo "Traefik:"
-	@docker inspect --format='{{.State.Health.Status}}' traefik 2>/dev/null || echo "  ❌ Not running"
+	@docker inspect --format='{{.State.Status}}' traefik 2>/dev/null | grep -q running && echo "  ✓ Running" || echo "  ❌ Not running"
 
 models: ## List available models (via ai-router virtual model)
 	@curl -s http://localhost/v1/models | jq .
