@@ -25,8 +25,7 @@ This is a homelab AI router that classifies incoming requests and routes them to
 
 | Route | Classification | Backend | When |
 |-------|---------------|---------|------|
-| `primary` | SIMPLE | Nano 30B (local) | Greetings, trivial questions |
-| `primary` | MODERATE | Nano 30B (local) | Coding, analysis, explanations |
+| `primary` | MODERATE | Nano 30B (local) | Greetings, chat, coding, analysis, explanations |
 | `xai` | COMPLEX | Grok (xAI API) | Research-level, novel problems |
 | `enrich` | ENRICH | Grok → Nano 30B | Queries needing real-time/web data |
 | `meta` | META (heuristic) | Nano 30B (local) | Client-generated meta-prompts (skips classification) |
@@ -38,6 +37,16 @@ Classification is done by a small router model (Nemotron Orchestrator 8B) respon
 Review session logs in `logs/sessions/` and produce a structured report. You may also directly edit prompt templates if you identify clear improvements.
 
 ### Step 1: Load and Analyze Logs
+
+#### Incremental review (boardroom mode)
+
+If your prompt includes an **Incremental Review State** section, follow its instructions:
+- **Session logs**: Only read files with timestamps *after* `last_session_ts` (compare the `timestamp` field inside each JSON). If `last_session_ts` is null, read all available sessions.
+- **App log**: Only read lines *after* `last_app_log_line`. Use the Read tool with an `offset` parameter to skip already-reviewed lines.
+- **Required sessions**: If `required_sessions` lists any session IDs, read those specific files regardless of timestamp (a previous boardroom decision flagged them for re-review).
+- **After you finish**: Update the state file (path given in the state section) with the newest session timestamp you reviewed, the last app.log line number you read, and an empty `required_sessions` array.
+
+In standalone mode (no state section), read everything as before.
 
 #### Application log
 
@@ -54,7 +63,7 @@ client_ip           — client's real IP address (resolved via proxy headers)
 user_query          — the original user message (truncated to 500 chars)
 client_messages     — full original message array from the client
 route               — which route was chosen (primary, xai, enrich, meta)
-classification_raw  — the raw classifier output (e.g. "SIMPLE", "MODERATE")
+classification_raw  — the raw classifier output (e.g. "MODERATE", "COMPLEX")
 classification_ms   — how long classification took in milliseconds
 steps[]             — ordered list of API calls:
   step              — step type (classification, enrichment, provider_call)
@@ -71,14 +80,14 @@ total_ms            — end-to-end request time
 error               — error message if failed, null otherwise
 ```
 
-Read ALL session log files from `logs/sessions/`. Use glob to find them, then read each one. Do not sample — review every file.
+In standalone mode, read ALL session log files from `logs/sessions/`. In boardroom mode with incremental state, read only the files that are newer than `last_session_ts` or listed in `required_sessions` (see "Incremental review" above). Use glob to find them, then read each one. Do not sample — review every file that falls within your scope.
 
 ### Step 2: Identify Issues
 
 Look for these specific problem categories:
 
 #### Misclassifications
-- **Over-escalation**: A SIMPLE or MODERATE query sent to xAI (wasted cloud API call, unnecessary cost and latency). Look for `route: "xai"` where the `user_query` is clearly a basic question, concept explanation, or coding task.
+- **Over-escalation**: A MODERATE query sent to xAI (wasted cloud API call, unnecessary cost and latency). Look for `route: "xai"` where the `user_query` is clearly a basic question, concept explanation, or coding task.
 - **Under-escalation**: A genuinely COMPLEX query kept on the local model. Look for `route: "primary"` with `classification_raw: "MODERATE"` where the query clearly requires research-level depth, novel problem-solving, or cutting-edge knowledge.
 - **Missed ENRICH**: A query needing current/real-time information that was classified as something else. Look for queries mentioning "today", "current", "latest", "right now", specific dates, named businesses/places/people — routed to `primary` instead of `enrich`.
 - **False ENRICH**: A query that doesn't need real-time data but was classified as ENRICH. Look for `route: "enrich"` where the query is a general concept question, coding task, or anything that doesn't require current information.
@@ -165,6 +174,29 @@ Do NOT edit any prompt files. Instead, append a `## Proposals` section to your r
 
 Each proposal must be independent (one pattern per proposal, no bundling). The Adversarial Challenger will evaluate each one separately.
 
+##### Code proposals (boardroom mode only)
+
+If session logs reveal issues traceable to Python code (e.g., error handling gaps, logging blind spots, forwarding bugs), you may propose diffs to files listed in `proposable_code_files` in `review-board.yaml`. Code proposals use a stricter format:
+
+```markdown
+### Proposal N: [One-line summary]
+**Problem**: [What code-level issue you identified]
+**Evidence**: [Session IDs — minimum 3 required]
+**Target file**: [Which src/*.py file — must be in proposable_code_files]
+**Function/line range**: [e.g., `providers.py:classify_request(), lines 45-62`]
+**Boundary affected**: [Configuration | Providers | Routing | Logging — exactly one]
+**Proposed edit**:
+\`\`\`diff
+- [line to remove or change]
++ [line to add or replace]
+\`\`\`
+**Rationale**: [Why this edit fixes the problem. Must explain how boundary contracts from src/CLAUDE.md are preserved.]
+**Risk assessment**: [What other code paths might be affected. Must address separation of concerns.]
+**Import/dependency changes**: [None | List any new imports with justification]
+```
+
+Code proposals are **never auto-applied** — even after QA PASS, a human reviews and applies the diff manually. Each code proposal must affect exactly one file and one boundary. You may not propose new files, only modifications to existing ones.
+
 #### Standalone mode (default)
 
 If you identify **clear, unambiguous** prompt improvements, you may edit the prompt templates directly. Only do this when:
@@ -185,7 +217,7 @@ Prompt files you may edit:
 - Any Python source files
 
 When editing a prompt file:
-- Add a comment at the bottom noting what changed and why (e.g. `<!-- Added "recipe" example to SIMPLE after 5 misclassifications -->`)
+- Add a comment at the bottom noting what changed and why (e.g. `<!-- Added "recipe" example to MODERATE after 5 misclassifications -->`)
 - Keep changes minimal — add examples or clarifying sentences, don't rewrite
 - Note the change in your report under "Changes Applied"
 

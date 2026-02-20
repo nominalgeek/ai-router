@@ -152,14 +152,6 @@ services:
       timeout: 10s
       retries: 5
       start_period: 180s  # Models take time to load
-    labels:
-      - "traefik.enable=true"
-      - "traefik.http.routers.router.rule=PathPrefix(`/router`)"
-      - "traefik.http.routers.router.entrypoints=web"
-      - "traefik.http.routers.router.service=router"
-      - "traefik.http.services.router.loadbalancer.server.port=8001"
-      - "traefik.http.middlewares.router-stripprefix.stripprefix.prefixes=/router"
-      - "traefik.http.routers.router.middlewares=router-stripprefix"
     networks:
       - ai-internal
 
@@ -211,14 +203,6 @@ services:
       timeout: 10s
       retries: 5
       start_period: 180s
-    labels:
-      - "traefik.enable=true"
-      - "traefik.http.routers.primary.rule=PathPrefix(`/primary`)"
-      - "traefik.http.routers.primary.entrypoints=web"
-      - "traefik.http.routers.primary.service=primary"
-      - "traefik.http.services.primary.loadbalancer.server.port=8000"
-      - "traefik.http.middlewares.primary-stripprefix.stripprefix.prefixes=/primary"
-      - "traefik.http.routers.primary.middlewares=primary-stripprefix"
     networks:
       - ai-internal
 

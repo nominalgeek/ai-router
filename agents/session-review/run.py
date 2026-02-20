@@ -53,16 +53,23 @@ def parse_args():
         metavar="REPORT_PATH",
         help="Run in boardroom mode — write proposals (not edits) to this report path",
     )
+    parser.add_argument(
+        "--state",
+        metavar="STATE_FILE",
+        help="Path to incremental review state JSON (boardroom mode only)",
+    )
     return parser.parse_args()
 
 
-async def run_review(model: str, boardroom_report: str | None = None):
+async def run_review(model: str, boardroom_report: str | None = None, state_file: str | None = None):
     """Launch the session-review agent and stream progress to stdout.
 
     Args:
         model: Claude model to use.
         boardroom_report: If set, run in boardroom mode — the agent writes
             proposals to this path instead of applying edits directly.
+        state_file: Path to incremental review state JSON.  When provided,
+            the agent only processes logs newer than the stored watermarks.
     """
 
     if not AGENT_PROMPT.exists():
@@ -87,9 +94,41 @@ async def run_review(model: str, boardroom_report: str | None = None):
         # Boardroom mode: prepend the marker so the agent writes structured
         # proposals instead of applying edits.  Also redirect report output
         # to the boardroom directory.
+        state_block = ""
+        if state_file:
+            state_path = Path(state_file)
+            if state_path.exists():
+                state_json = state_path.read_text().strip()
+                state_block = (
+                    f"## Incremental Review State\n\n"
+                    f"State file: `{state_file}`\n\n"
+                    f"```json\n{state_json}\n```\n\n"
+                    f"**Instructions:** Only analyze session logs with timestamps AFTER "
+                    f"`last_session_ts` (or listed in `required_sessions`), and app.log "
+                    f"lines after line `last_app_log_line`. If `last_session_ts` is null, "
+                    f"this is the first run — analyze all available logs.\n\n"
+                    f"**After analysis:** Update the state file by writing JSON to `{state_file}` with:\n"
+                    f"- `last_session_ts`: ISO timestamp of the newest session you reviewed\n"
+                    f"- `last_app_log_line`: the last line number of app.log you read\n"
+                    f"- `required_sessions`: [] (clear after processing)\n\n"
+                    f"---\n\n"
+                )
+            else:
+                # First run — no state file yet, agent should review everything
+                state_block = (
+                    f"## Incremental Review State\n\n"
+                    f"No previous state found (`{state_file}` does not exist). "
+                    f"This is the first boardroom run — analyze all available logs.\n\n"
+                    f"**After analysis:** Create the state file by writing JSON to `{state_file}` with:\n"
+                    f"- `last_session_ts`: ISO timestamp of the newest session you reviewed\n"
+                    f"- `last_app_log_line`: the last line number of app.log you read\n"
+                    f"- `required_sessions`: []\n\n"
+                    f"---\n\n"
+                )
         prompt = (
             f"BOARDROOM_MODE=true\n\n"
             f"Write your report (with ## Proposals section) to: `{boardroom_report}`\n\n"
+            f"{state_block}"
             f"---\n\n{prompt}"
         )
 
@@ -103,6 +142,7 @@ async def run_review(model: str, boardroom_report: str | None = None):
         "Write(logs/reviews/*)",
         "Bash(mkdir -p logs/reviews)",
         "Bash(mkdir -p logs/reviews/boardroom)",
+        "Bash(wc -l logs/app.log)",  # line count for incremental read
     ]
     if not boardroom_report:
         # Standalone mode: allow direct prompt edits (AGENT.md Step 4)
@@ -140,7 +180,7 @@ async def run_review(model: str, boardroom_report: str | None = None):
 
 def main():
     args = parse_args()
-    success = asyncio.run(run_review(args.model, args.boardroom))
+    success = asyncio.run(run_review(args.model, args.boardroom, args.state))
     sys.exit(0 if success else 1)
 
 

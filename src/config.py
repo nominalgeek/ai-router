@@ -85,6 +85,11 @@ XAI_SEARCH_TOOLS = os.getenv('XAI_SEARCH_TOOLS', 'web_search,x_search')
 # default (often 100-300 from Open WebUI) truncates substantive answers.
 XAI_MIN_MAX_TOKENS = int(os.getenv('XAI_MIN_MAX_TOKENS', '16384'))
 
+# Whether to write session log files for meta-pipeline requests (title generation,
+# follow-up suggestions, summaries).  These are high-volume, low-signal requests
+# from Open WebUI that clutter the session log directory.  Default: disabled.
+LOG_META_SESSIONS = os.getenv('LOG_META_SESSIONS', 'false').lower() in ('true', '1', 'yes')
+
 # Timezone configuration (defaults to US Pacific / Happy Valley, OR)
 LOCAL_TZ = ZoneInfo(os.getenv('TZ', 'America/Los_Angeles'))
 
@@ -147,7 +152,6 @@ def date_context():
 
 # Prompt file paths
 ROUTING_PROMPT_PATH = os.getenv('ROUTING_PROMPT_PATH', '/app/config/prompts/routing/request.md')
-ROUTING_TRUNCATION_NOTE_PATH = os.getenv('ROUTING_TRUNCATION_NOTE_PATH', '/app/config/prompts/routing/truncation_note.md')
 ROUTING_SYSTEM_PROMPT_PATH = os.getenv('ROUTING_SYSTEM_PROMPT_PATH', '/app/config/prompts/routing/system.md')
 PRIMARY_SYSTEM_PROMPT_PATH = os.getenv('PRIMARY_SYSTEM_PROMPT_PATH', '/app/config/prompts/primary/system.md')
 ENRICHMENT_SYSTEM_PROMPT_PATH = os.getenv('ENRICHMENT_SYSTEM_PROMPT_PATH', '/app/config/prompts/enrichment/system.md')
@@ -191,23 +195,16 @@ PRIMARY_SYSTEM_PROMPT = load_prompt_file(
 
 ROUTING_SYSTEM_PROMPT = load_prompt_file(
     ROUTING_SYSTEM_PROMPT_PATH,
-    'You are a query classifier. Respond with ONLY ONE WORD: SIMPLE, MODERATE, or COMPLEX.',
+    'You are a query classifier. Respond with ONLY ONE WORD: MODERATE, COMPLEX, or ENRICH.',
     'routing system prompt'
 )
 
 ROUTING_PROMPT = load_prompt_file(
     ROUTING_PROMPT_PATH,
-    ('Classify this query as SIMPLE, MODERATE, COMPLEX, or ENRICH.\n'
+    ('Classify this query as MODERATE, COMPLEX, or ENRICH.\n'
      'User query: "{query}"\n'
-     '{truncation_note}\n'
-     'Respond with ONLY ONE WORD: SIMPLE, MODERATE, COMPLEX, or ENRICH'),
+     'Respond with ONLY ONE WORD: MODERATE, COMPLEX, or ENRICH'),
     'routing prompt'
-)
-
-ROUTING_TRUNCATION_NOTE = load_prompt_file(
-    ROUTING_TRUNCATION_NOTE_PATH,
-    'Note: The above query was truncated. Classify based on what you can see.',
-    'routing truncation note'
 )
 
 ENRICHMENT_SYSTEM_PROMPT = load_prompt_file(

@@ -18,6 +18,7 @@ from src.config import (
     META_SYSTEM_PROMPT,
     XAI_MIN_MAX_TOKENS,
     API_KEY,
+    LOG_META_SESSIONS,
 )
 from src.session_logger import SessionLogger
 from src.providers import (
@@ -354,7 +355,8 @@ def _handle_meta(data, session, date_ctx):
     result = forward_request(PRIMARY_URL, '/v1/chat/completions', data, 'primary',
                              session=session, date_ctx=date_ctx)
     _log_request_summary(session)
-    session.save()
+    if LOG_META_SESSIONS:
+        session.save()
     return result
 
 
@@ -386,7 +388,7 @@ def chat_completions():
     Compatible with OpenAI API format.
 
     Speculative execution: fires a primary model request in parallel with
-    classification.  ~80% of requests route to primary (SIMPLE/MODERATE),
+    classification.  ~80% of requests route to primary (MODERATE),
     so the speculative request usually saves ~1–1.8s of classification
     latency.  For streaming, this drops TTFT from ~1s to ~48ms.
 
@@ -547,7 +549,7 @@ def stats():
     return jsonify({
         'message': 'Statistics endpoint - not yet implemented',
         'routes': {
-            'primary': 'Local model for simple and moderate queries',
+            'primary': 'Local model for moderate queries',
             'xai': 'Cloud model for complex queries and enrichment'
         }
     })

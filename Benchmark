@@ -11,9 +11,21 @@ NC='\033[0m'
 
 BASE_URL="http://localhost"
 
+# Load API key from .secrets if available (needed for ai-router endpoints).
+API_KEY=""
+if [ -f .secrets ]; then
+    API_KEY=$(grep '^API_KEY=' .secrets | cut -d'=' -f2-)
+fi
+
+# Auth header for ai-router endpoints (not needed for direct vLLM calls).
+AUTH_HEADER=()
+if [ -n "$API_KEY" ]; then
+    AUTH_HEADER=(-H "Authorization: Bearer $API_KEY")
+fi
+
 echo -e "${BLUE}==================================="
 echo "AI Router Benchmark Suite"
-echo "Five-Route Routing Pipeline"
+echo "Four-Route Routing Pipeline"
 echo "===================================${NC}"
 echo ""
 
@@ -29,10 +41,12 @@ echo ""
 # Warm up all three tiers
 curl -s -X POST "$BASE_URL/v1/chat/completions" \
   -H "Content-Type: application/json" \
+  "${AUTH_HEADER[@]}" \
   -d '{"messages": [{"role": "user", "content": "hi"}], "max_tokens": 5}' > /dev/null 2>&1
 
 curl -s -X POST "$BASE_URL/v1/chat/completions" \
   -H "Content-Type: application/json" \
+  "${AUTH_HEADER[@]}" \
   -d '{"messages": [{"role": "user", "content": "Explain AI"}], "max_tokens": 10}' > /dev/null 2>&1
 
 echo -e "${GREEN}✓ Warmup complete${NC}"
@@ -42,28 +56,30 @@ echo ""
 echo -e "${BLUE}=== Benchmark 1: Routing Latency by Category ===${NC}"
 echo ""
 
-echo -e "${YELLOW}SIMPLE Query (Nano 30B via primary):${NC}"
+echo -e "${YELLOW}MODERATE Query — short (Nano 30B via primary):${NC}"
 START=$(date +%s.%N)
 curl -s -X POST "$BASE_URL/v1/chat/completions" \
   -H "Content-Type: application/json" \
+  "${AUTH_HEADER[@]}" \
   -d '{
     "messages": [{"role": "user", "content": "Hello"}],
     "max_tokens": 10,
     "stream": false
-  }' > /tmp/simple_response.json
+  }' > /tmp/moderate_short_response.json
 END=$(date +%s.%N)
 LATENCY=$(echo "$END - $START" | bc)
-MODEL=$(cat /tmp/simple_response.json | jq -r '.model' 2>/dev/null || echo "Error")
-RESPONSE=$(cat /tmp/simple_response.json | jq -r '.choices[0].message.content // .choices[0].message.reasoning_content' 2>/dev/null || echo "Error")
+MODEL=$(cat /tmp/moderate_short_response.json | jq -r '.model' 2>/dev/null || echo "Error")
+RESPONSE=$(cat /tmp/moderate_short_response.json | jq -r '.choices[0].message.content // .choices[0].message.reasoning_content' 2>/dev/null || echo "Error")
 echo "  Latency: ${LATENCY}s"
 echo "  Model: ${MODEL}"
 echo "  Response: ${RESPONSE:0:100}"
 echo ""
 
-echo -e "${YELLOW}MODERATE Query (Nano 30B via router):${NC}"
+echo -e "${YELLOW}MODERATE Query — long (Nano 30B via router):${NC}"
 START=$(date +%s.%N)
 curl -s -X POST "$BASE_URL/v1/chat/completions" \
   -H "Content-Type: application/json" \
+  "${AUTH_HEADER[@]}" \
   -d '{
     "messages": [{"role": "user", "content": "Explain how neural networks learn"}],
     "max_tokens": 50,
@@ -82,6 +98,7 @@ echo -e "${YELLOW}COMPLEX Query (xAI Grok via router):${NC}"
 START=$(date +%s.%N)
 curl -s -X POST "$BASE_URL/v1/chat/completions" \
   -H "Content-Type: application/json" \
+  "${AUTH_HEADER[@]}" \
   -d '{
     "messages": [{"role": "user", "content": "Design a novel approach to quantum error correction"}],
     "max_tokens": 100,
@@ -100,6 +117,7 @@ echo -e "${YELLOW}ENRICH Query (xAI context → Nano 30B):${NC}"
 START=$(date +%s.%N)
 curl -s -X POST "$BASE_URL/v1/chat/completions" \
   -H "Content-Type: application/json" \
+  "${AUTH_HEADER[@]}" \
   -d '{
     "messages": [{"role": "user", "content": "What are the latest developments in AI regulation this week?"}],
     "max_tokens": 200,
@@ -115,46 +133,57 @@ echo "  Response: ${RESPONSE:0:100}"
 echo ""
 
 # Benchmark 2: Throughput Test
+# Uses /api/route with explicit routing to bypass classification overhead,
+# measuring raw primary model throughput through the ai-router.
 echo -e "${BLUE}=== Benchmark 2: Throughput (Tokens/Second) ===${NC}"
 echo ""
 
-echo -e "${YELLOW}Router Model (100 tokens):${NC}"
+echo -e "${YELLOW}Primary Model — short (100 tokens):${NC}"
 START=$(date +%s.%N)
-curl -s -X POST "$BASE_URL/router/v1/chat/completions" \
+curl -s -X POST "$BASE_URL/api/route" \
   -H "Content-Type: application/json" \
+  "${AUTH_HEADER[@]}" \
   -d '{
-    "messages": [{"role": "user", "content": "Write a short paragraph about artificial intelligence"}],
-    "max_tokens": 100,
-    "stream": false
-  }' > /tmp/router_throughput.json
+    "route": "primary",
+    "data": {
+      "messages": [{"role": "user", "content": "Write a short paragraph about artificial intelligence"}],
+      "max_tokens": 100,
+      "stream": false
+    }
+  }' > /tmp/primary_short_throughput.json
 END=$(date +%s.%N)
 DURATION=$(echo "$END - $START" | bc)
-TOKENS=$(cat /tmp/router_throughput.json | jq -r '.usage.completion_tokens' 2>/dev/null || echo "0")
-TPS=$(echo "scale=2; $TOKENS / $DURATION" | bc)
+TOKENS=$(jq -r '.usage.completion_tokens // 0' /tmp/primary_short_throughput.json 2>/dev/null || echo "0")
+TPS=$(echo "scale=1; $TOKENS / $DURATION" | bc)
 echo "  Duration: ${DURATION}s"
 echo "  Tokens: ${TOKENS}"
 echo "  Throughput: ${TPS} tokens/sec"
 echo ""
 
-echo -e "${YELLOW}Primary Model (300 tokens):${NC}"
+echo -e "${YELLOW}Primary Model — long (300 tokens):${NC}"
 START=$(date +%s.%N)
-curl -s -X POST "$BASE_URL/primary/v1/chat/completions" \
+curl -s -X POST "$BASE_URL/api/route" \
   -H "Content-Type: application/json" \
+  "${AUTH_HEADER[@]}" \
   -d '{
-    "messages": [{"role": "user", "content": "Explain quantum computing in detail"}],
-    "max_tokens": 300,
-    "stream": false
-  }' > /tmp/primary_throughput.json
+    "route": "primary",
+    "data": {
+      "messages": [{"role": "user", "content": "Explain quantum computing in detail"}],
+      "max_tokens": 300,
+      "stream": false
+    }
+  }' > /tmp/primary_long_throughput.json
 END=$(date +%s.%N)
 DURATION=$(echo "$END - $START" | bc)
-TOKENS=$(cat /tmp/primary_throughput.json | jq -r '.usage.completion_tokens' 2>/dev/null || echo "0")
-TPS=$(echo "scale=2; $TOKENS / $DURATION" | bc)
+TOKENS=$(jq -r '.usage.completion_tokens // 0' /tmp/primary_long_throughput.json 2>/dev/null || echo "0")
+TPS=$(echo "scale=1; $TOKENS / $DURATION" | bc)
 echo "  Duration: ${DURATION}s"
 echo "  Tokens: ${TOKENS}"
 echo "  Throughput: ${TPS} tokens/sec"
 echo ""
 
 # Benchmark 3: Context Length Test
+# Sends a long prompt through the ai-router via explicit routing to primary.
 echo -e "${BLUE}=== Benchmark 3: Long Context Performance ===${NC}"
 echo ""
 
@@ -164,11 +193,15 @@ START=$(date +%s.%N)
 # No max_tokens — matches how the router sends requests to the primary model.
 # The Nano 30B reasoning model uses its token budget for <think> blocks;
 # any artificial cap risks truncating reasoning before content is emitted.
-curl -s -X POST "$BASE_URL/primary/v1/chat/completions" \
+curl -s -X POST "$BASE_URL/api/route" \
   -H "Content-Type: application/json" \
+  "${AUTH_HEADER[@]}" \
   -d "{
-    \"messages\": [{\"role\": \"user\", \"content\": \"${LONG_PROMPT:0:4000} Summarize the above.\"}],
-    \"stream\": false
+    \"route\": \"primary\",
+    \"data\": {
+      \"messages\": [{\"role\": \"user\", \"content\": \"${LONG_PROMPT:0:4000} Summarize the above.\"}],
+      \"stream\": false
+    }
   }" > /tmp/primary_context.json 2>/dev/null
 END=$(date +%s.%N)
 DURATION=$(echo "$END - $START" | bc)
@@ -184,16 +217,18 @@ fi
 echo ""
 
 # Benchmark 4: Concurrent Requests
+# Sends 5 concurrent requests through the full routing pipeline.
 echo -e "${BLUE}=== Benchmark 4: Concurrent Request Handling ===${NC}"
 echo ""
 
-echo -e "${YELLOW}Testing 10 concurrent requests to router model:${NC}"
+echo -e "${YELLOW}Testing 5 concurrent requests through router:${NC}"
 START=$(date +%s.%N)
-for i in {1..10}; do
-  curl -s -X POST "$BASE_URL/router/v1/chat/completions" \
+for i in {1..5}; do
+  curl -s -X POST "$BASE_URL/v1/chat/completions" \
     -H "Content-Type: application/json" \
+    "${AUTH_HEADER[@]}" \
     -d "{
-      \"messages\": [{\"role\": \"user\", \"content\": \"Request $i\"}],
+      \"messages\": [{\"role\": \"user\", \"content\": \"Request $i: say hello\"}],
       \"max_tokens\": 20,
       \"stream\": false
     }" > /tmp/concurrent_$i.json 2>/dev/null &
@@ -201,10 +236,15 @@ done
 wait
 END=$(date +%s.%N)
 DURATION=$(echo "$END - $START" | bc)
-SUCCESSFUL=$(ls /tmp/concurrent_*.json 2>/dev/null | wc -l)
-echo "  Completed: $SUCCESSFUL/10 requests"
+SUCCESSFUL=0
+for i in {1..5}; do
+  if jq -e '.choices[0].message' /tmp/concurrent_$i.json > /dev/null 2>&1; then
+    SUCCESSFUL=$((SUCCESSFUL + 1))
+  fi
+done
+echo "  Completed: $SUCCESSFUL/5 requests"
 echo "  Total time: ${DURATION}s"
-echo "  Avg time per request: $(echo "scale=2; $DURATION / 10" | bc)s"
+echo "  Avg time per request: $(echo "scale=2; $DURATION / 5" | bc)s"
 rm -f /tmp/concurrent_*.json
 echo ""
 
@@ -212,11 +252,12 @@ echo ""
 echo -e "${BLUE}=== Benchmark 5: Streaming Latency ===${NC}"
 echo ""
 
-echo -e "${YELLOW}Router Model (streaming):${NC}"
+echo -e "${YELLOW}Streaming through router (time to first token):${NC}"
 START=$(date +%s.%N)
 FIRST_CHUNK_TIME=""
-curl -s -X POST "$BASE_URL/router/v1/chat/completions" \
+curl -s -X POST "$BASE_URL/v1/chat/completions" \
   -H "Content-Type: application/json" \
+  "${AUTH_HEADER[@]}" \
   -d '{
     "messages": [{"role": "user", "content": "Count to 10"}],
     "max_tokens": 50,
@@ -237,60 +278,52 @@ nvidia-smi --query-gpu=memory.used,memory.free,memory.total --format=csv,noheade
   awk '{printf "  Used: %d MB\n  Free: %d MB\n  Total: %d MB\n  Utilization: %.1f%%\n", $1, $2, $3, ($1/$3)*100}'
 echo ""
 
-# Benchmark 6: Routing Decision Overhead
-echo -e "${BLUE}=== Benchmark 6: Prompt-Based Routing Overhead ===${NC}"
+# Benchmark 6: Routing Classification Overhead
+# Compares explicit routing (no classification) vs auto-routing (with classification)
+# to isolate the time spent on the Orchestrator 8B classification step.
+echo -e "${BLUE}=== Benchmark 6: Routing Classification Overhead ===${NC}"
 echo ""
 
-echo -e "${YELLOW}Measuring routing classification time:${NC}"
-# Direct call to Orchestrator 8B (no routing)
+echo -e "${YELLOW}Measuring classification overhead:${NC}"
+# Explicit route — bypasses Orchestrator 8B classification
 START=$(date +%s.%N)
-curl -s -X POST "$BASE_URL/router/v1/chat/completions" \
+curl -s -X POST "$BASE_URL/api/route" \
   -H "Content-Type: application/json" \
-  -d '{"messages": [{"role": "user", "content": "Hello"}], "max_tokens": 5}' > /dev/null
+  "${AUTH_HEADER[@]}" \
+  -d '{"route": "primary", "data": {"messages": [{"role": "user", "content": "Hello"}], "max_tokens": 5}}' > /dev/null
 END=$(date +%s.%N)
 DIRECT_TIME=$(echo "$END - $START" | bc)
 
-# Call through router (with routing classification)
+# Auto-routed — includes Orchestrator 8B classification
 START=$(date +%s.%N)
 curl -s -X POST "$BASE_URL/v1/chat/completions" \
   -H "Content-Type: application/json" \
+  "${AUTH_HEADER[@]}" \
   -d '{"messages": [{"role": "user", "content": "Hello"}], "max_tokens": 5}' > /dev/null
 END=$(date +%s.%N)
 ROUTED_TIME=$(echo "$END - $START" | bc)
 
 OVERHEAD=$(echo "$ROUTED_TIME - $DIRECT_TIME" | bc)
-echo "  Direct call: ${DIRECT_TIME}s"
-echo "  Routed call: ${ROUTED_TIME}s"
-echo "  Routing overhead: ${OVERHEAD}s"
+echo "  Explicit route (no classification): ${DIRECT_TIME}s"
+echo "  Auto-routed (with classification): ${ROUTED_TIME}s"
+echo "  Classification overhead: ${OVERHEAD}s"
 echo ""
 
 # Model Information
 echo -e "${BLUE}=== Routing Architecture ===${NC}"
 echo ""
 
-echo -e "${YELLOW}SIMPLE - Router (Orchestrator 8B):${NC}"
-curl -s "$BASE_URL/router/v1/models" | jq -r '.data[0] | "  Model: \(.id)\n  Role: Classification only"' 2>/dev/null || echo "  Error fetching model info"
+echo -e "${YELLOW}Models (via /v1/models):${NC}"
+curl -s "${AUTH_HEADER[@]}" "$BASE_URL/v1/models" | jq -r '.data[].id' 2>/dev/null | while read id; do
+  echo "  • $id"
+done
 echo ""
 
-echo -e "${YELLOW}MODERATE - Primary (Nano 30B):${NC}"
-curl -s "$BASE_URL/primary/v1/models" | jq -r '.data[0] | "  Model: \(.id)\n  Role: Moderate complexity queries"' 2>/dev/null || echo "  Error fetching model info"
-echo ""
-
-echo -e "${YELLOW}COMPLEX - xAI (Grok):${NC}"
-echo "  Model: grok-4-1-fast-reasoning"
-echo "  Role: Highly complex research queries"
-echo ""
-
-echo -e "${YELLOW}ENRICH - xAI context → Primary (Nano 30B):${NC}"
-echo "  Context: grok-4-1-fast-reasoning (retrieval)"
-echo "  Inference: Nano 30B (with injected context)"
-echo "  Role: Queries requiring current/real-time information"
-echo ""
-
-echo -e "${YELLOW}META - Primary (Nano 30B):${NC}"
-echo "  Model: Nano 30B"
-echo "  Role: Client-generated meta-prompts (follow-ups, titles, summaries)"
-echo "  Note: Skips classification — detected by message structure heuristics"
+echo -e "${YELLOW}Routes:${NC}"
+echo "  • MODERATE → Nano 30B (local, classified by Orchestrator 8B)"
+echo "  • COMPLEX  → Grok (xAI API)"
+echo "  • ENRICH   → Grok context fetch → Nano 30B"
+echo "  • META     → Nano 30B (skips classification)"
 echo ""
 
 # Summary
@@ -298,11 +331,10 @@ echo -e "${BLUE}==================================="
 echo "Benchmark Complete"
 echo "===================================${NC}"
 echo ""
-echo -e "${GREEN}Five-route routing system is operational!${NC}"
+echo -e "${GREEN}Four-route routing system is operational!${NC}"
 echo ""
 echo "Architecture:"
-echo "  • SIMPLE   → Nano 30B: Simple queries (classified by Orchestrator 8B)"
-echo "  • MODERATE → Nano 30B: Moderate complexity (local)"
+echo "  • MODERATE → Nano 30B: Local queries (classified by Orchestrator 8B)"
 echo "  • COMPLEX  → Grok: Research-level complexity (xAI API)"
 echo "  • ENRICH   → Grok context fetch → Nano 30B: Real-time information"
 echo "  • META     → Nano 30B: Client meta-prompts (skips classification)"
@@ -314,6 +346,6 @@ echo "  • Adjust classification prompts in config/"
 echo ""
 
 # Cleanup
-rm -f /tmp/simple_response.json /tmp/moderate_response.json /tmp/complex_response.json /tmp/enrich_response.json
-rm -f /tmp/router_throughput.json /tmp/primary_throughput.json
+rm -f /tmp/moderate_short_response.json /tmp/moderate_response.json /tmp/complex_response.json /tmp/enrich_response.json
+rm -f /tmp/primary_short_throughput.json /tmp/primary_long_throughput.json
 rm -f /tmp/primary_context.json

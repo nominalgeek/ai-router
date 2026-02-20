@@ -17,7 +17,7 @@ Our prompt-based classification with Mini 4B is the lightweight version of what 
 
 ### Martian Model Router
 
-Commercial router that picks the best model per-request based on quality, cost, and latency targets. Their framing of "which model is cheapest for this quality target" maps directly to our SIMPLE/MODERATE/COMPLEX tiers.
+Commercial router that picks the best model per-request based on quality, cost, and latency targets. Their framing of "which model is cheapest for this quality target" maps directly to our MODERATE/COMPLEX tiers.
 
 - Key idea: Route as a cost-quality optimization problem, not just a complexity classifier.
 
@@ -95,7 +95,7 @@ Most of these projects assume **cloud-to-cloud routing** — choosing between GP
 
 5. **Self-improvement from production logs.** Most routing projects are static — train a router, deploy it, done. Our vision is a closed loop where session logs from real usage feed back into prompt refinement. This is closer to DSPy's philosophy but applied at the system level rather than the prompt level.
 
-6. **PII as a routing dimension.** The local/cloud boundary isn't just a complexity boundary — it's a privacy boundary. Data routed to SIMPLE, MODERATE, or META never leaves the local machine. Data routed to COMPLEX or ENRICH hits xAI's API. This makes the routing decision a de facto PII gate. Future work: teach the classifier (or add a separate detection step) to recognize PII-heavy queries and force them local, even if complexity would normally warrant cloud escalation. The tradeoff is a potentially weaker local answer vs. sensitive data leaving the network. More advanced: scrub PII before cloud forwarding, then re-inject originals into the response. Session logs already capture what gets sent to cloud, making PII leakage auditable today.
+6. **PII as a routing dimension.** The local/cloud boundary isn't just a complexity boundary — it's a privacy boundary. Data routed to MODERATE or META never leaves the local machine. Data routed to COMPLEX or ENRICH hits xAI's API. This makes the routing decision a de facto PII gate. Future work: teach the classifier (or add a separate detection step) to recognize PII-heavy queries and force them local, even if complexity would normally warrant cloud escalation. The tradeoff is a potentially weaker local answer vs. sensitive data leaving the network. More advanced: scrub PII before cloud forwarding, then re-inject originals into the response. Session logs already capture what gets sent to cloud, making PII leakage auditable today.
 
 ## The Hardware Reality
 
