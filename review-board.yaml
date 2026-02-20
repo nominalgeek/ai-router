@@ -40,8 +40,14 @@ roles:
     title: "Session CEO"
     agent: "agents/session-review/AGENT.md"
     runner: "agents/session-review/run.py"
+    state:
+      file: "logs/reviews/boardroom/state.json"   # {last_app_log_line: 0, last_session_ts: "ISO", required_sessions: []}
+    inputs:
+      review_state: "logs/reviews/boardroom/state.json"
     responsibilities:
-      - "Analyze session logs in logs/sessions/ and logs/app.log"
+      - "Load state; analyze ONLY new/unreviewed sessions (timestamp > last_session_ts or in required_sessions) and app.log lines after last_app_log_line"
+      - "Full re-read only if previous boardroom decision sets required_sessions or full_review flag"
+      - "Update state with new last_app_log_line, last_session_ts, and clear required_sessions after processing"
       - "Identify misclassifications, enrichment failures, latency outliers"
       - "Identify code-level issues (e.g., error handling gaps, logging blind spots, forwarding bugs) and propose scoped Python diffs with rationale"
       - "Propose specific, scoped prompt edits with rationale and evidence"
@@ -203,6 +209,14 @@ rules:
   # an architectural concern, produces a human-review marker in the
   # decision record.  The human (you) reviews at your convenience.
   human_escalation_on_fail: true
+
+  # --- Incremental review ---
+  # CEO only processes new sessions/logs since last run, tracked via
+  # state.json.  Full re-reads happen only when explicitly requested
+  # by a previous boardroom decision (required_sessions or full_review).
+  # This makes iterations cheap, so unlimited daily runs are safe.
+  incremental_review: true
+  max_daily_iterations: unlimited   # now safe — each run processes only the delta
 
   # --- Prompt files the board may edit (after full pipeline approval) ---
   # Same whitelist as the existing session-review agent.

@@ -34,8 +34,8 @@ BOARDROOM_DIR = PROJECT_ROOT / "logs" / "reviews" / "boardroom"
 
 def parse_args():
     parser = argparse.ArgumentParser(description="Run the Improvement Board cycle")
-    parser.add_argument("--model", default="sonnet", help="Claude model (default: sonnet)")
-    parser.add_argument("--ceo-model", default="opus", help="Model for Session CEO (default: opus)")
+    parser.add_argument("--model", default="claude-opus-4-6", help="Claude model (default: sonnet)")
+    parser.add_argument("--ceo-model", default="claude-opus-4-6", help="Model for Session CEO (default: opus)")
     return parser.parse_args()
 
 
