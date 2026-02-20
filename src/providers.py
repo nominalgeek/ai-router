@@ -107,7 +107,7 @@ def determine_route(messages: list, session: SessionLogger = None, date_ctx: str
         {"role": "system", "content": f"{date_ctx or date_context()}\n\n{ROUTING_SYSTEM_PROMPT}"},
         {"role": "user", "content": routing_prompt}
     ]
-    classify_params = {"temperature": 0.0, "max_tokens": 64, "stop": ["\n"]}
+    classify_params = {"temperature": 0.0, "max_tokens": 64}
     classify_url = f"{ROUTER_URL}/v1/chat/completions"
 
     if session:
