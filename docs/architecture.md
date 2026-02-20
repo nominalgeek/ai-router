@@ -2,7 +2,7 @@
 
 ## System Overview
 
-Five-route intelligent routing system that classifies queries by complexity and routes them to the optimal AI model, with an enrichment pipeline for real-time information and a meta pipeline for client-generated meta-prompts.
+Four-route intelligent routing system that classifies queries by complexity and routes them to the optimal AI model, with an enrichment pipeline for real-time information and a meta pipeline for client-generated meta-prompts.
 
 ## Pipeline Diagram
 
@@ -41,9 +41,8 @@ flowchart TD
     MetaCheck -->|"No"| Classify
     MetaInject --> Forward
     Classify -->|"POST /v1/chat/completions<br/>temp=0"| Mini
-    Mini -->|"SIMPLE / MODERATE /<br/>COMPLEX / ENRICH"| Decision
+    Mini -->|"MODERATE /<br/>COMPLEX / ENRICH"| Decision
 
-    Decision -->|"SIMPLE"| Forward
     Decision -->|"MODERATE"| Forward
     Decision -->|"COMPLEX"| Forward
     Decision -->|"ENRICH"| Enrich
@@ -52,7 +51,6 @@ flowchart TD
     XAI -->|"Factual context"| Inject
     Inject --> Forward
 
-    Forward -->|"SIMPLE"| Primary
     Forward -->|"MODERATE"| Primary
     Forward -->|"COMPLEX"| XAI
     Forward -->|"ENRICH<br/>(enriched messages)"| Primary
@@ -98,8 +96,7 @@ flowchart LR
 flowchart LR
     subgraph Classification["routing/request.md"]
         direction TB
-        S["<b>SIMPLE</b><br/>Greetings, casual chat,<br/>basic factual questions"]
-        M["<b>MODERATE</b><br/>Explanations, coding help,<br/>standard analysis"]
+        M["<b>MODERATE</b><br/>Greetings, chat, coding help,<br/>explanations, standard analysis"]
         C["<b>COMPLEX</b><br/>Research-level, novel problems,<br/>cutting-edge topics"]
         E["<b>ENRICH</b><br/>Current events, real-time data,<br/>post-training-cutoff info"]
     end
@@ -108,13 +105,11 @@ flowchart LR
         META["<b>META</b><br/>Client meta-prompts<br/>(follow-ups, titles, summaries)"]
     end
 
-    S --> Primary
     M --> Primary["Nano 30B"]
     C --> XAI["xAI Grok"]
     E --> Enrichment["Enrichment Pipeline<br/>then Nano 30B"]
     META --> Primary
 
-    style S fill:#38a169,color:#fff
     style M fill:#d69e2e,color:#fff
     style C fill:#e53e3e,color:#fff
     style E fill:#6b4c8a,color:#fff

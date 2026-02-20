@@ -386,7 +386,7 @@ def chat_completions():
     Compatible with OpenAI API format.
 
     Speculative execution: fires a primary model request in parallel with
-    classification.  ~80% of requests route to primary (SIMPLE/MODERATE),
+    classification.  ~80% of requests route to primary (MODERATE),
     so the speculative request usually saves ~1–1.8s of classification
     latency.  For streaming, this drops TTFT from ~1s to ~48ms.
 
@@ -547,7 +547,7 @@ def stats():
     return jsonify({
         'message': 'Statistics endpoint - not yet implemented',
         'routes': {
-            'primary': 'Local model for simple and moderate queries',
+            'primary': 'Local model for moderate queries',
             'xai': 'Cloud model for complex queries and enrichment'
         }
     })

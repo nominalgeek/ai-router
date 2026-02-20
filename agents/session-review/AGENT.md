@@ -25,8 +25,7 @@ This is a homelab AI router that classifies incoming requests and routes them to
 
 | Route | Classification | Backend | When |
 |-------|---------------|---------|------|
-| `primary` | SIMPLE | Nano 30B (local) | Greetings, trivial questions |
-| `primary` | MODERATE | Nano 30B (local) | Coding, analysis, explanations |
+| `primary` | MODERATE | Nano 30B (local) | Greetings, chat, coding, analysis, explanations |
 | `xai` | COMPLEX | Grok (xAI API) | Research-level, novel problems |
 | `enrich` | ENRICH | Grok → Nano 30B | Queries needing real-time/web data |
 | `meta` | META (heuristic) | Nano 30B (local) | Client-generated meta-prompts (skips classification) |
@@ -54,7 +53,7 @@ client_ip           — client's real IP address (resolved via proxy headers)
 user_query          — the original user message (truncated to 500 chars)
 client_messages     — full original message array from the client
 route               — which route was chosen (primary, xai, enrich, meta)
-classification_raw  — the raw classifier output (e.g. "SIMPLE", "MODERATE")
+classification_raw  — the raw classifier output (e.g. "MODERATE", "COMPLEX")
 classification_ms   — how long classification took in milliseconds
 steps[]             — ordered list of API calls:
   step              — step type (classification, enrichment, provider_call)
@@ -78,7 +77,7 @@ Read ALL session log files from `logs/sessions/`. Use glob to find them, then re
 Look for these specific problem categories:
 
 #### Misclassifications
-- **Over-escalation**: A SIMPLE or MODERATE query sent to xAI (wasted cloud API call, unnecessary cost and latency). Look for `route: "xai"` where the `user_query` is clearly a basic question, concept explanation, or coding task.
+- **Over-escalation**: A MODERATE query sent to xAI (wasted cloud API call, unnecessary cost and latency). Look for `route: "xai"` where the `user_query` is clearly a basic question, concept explanation, or coding task.
 - **Under-escalation**: A genuinely COMPLEX query kept on the local model. Look for `route: "primary"` with `classification_raw: "MODERATE"` where the query clearly requires research-level depth, novel problem-solving, or cutting-edge knowledge.
 - **Missed ENRICH**: A query needing current/real-time information that was classified as something else. Look for queries mentioning "today", "current", "latest", "right now", specific dates, named businesses/places/people — routed to `primary` instead of `enrich`.
 - **False ENRICH**: A query that doesn't need real-time data but was classified as ENRICH. Look for `route: "enrich"` where the query is a general concept question, coding task, or anything that doesn't require current information.
@@ -185,7 +184,7 @@ Prompt files you may edit:
 - Any Python source files
 
 When editing a prompt file:
-- Add a comment at the bottom noting what changed and why (e.g. `<!-- Added "recipe" example to SIMPLE after 5 misclassifications -->`)
+- Add a comment at the bottom noting what changed and why (e.g. `<!-- Added "recipe" example to MODERATE after 5 misclassifications -->`)
 - Keep changes minimal — add examples or clarifying sentences, don't rewrite
 - Note the change in your report under "Changes Applied"
 

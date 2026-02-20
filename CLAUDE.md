@@ -6,18 +6,17 @@ See [AI_OPERATOR_PROFILE.md](AI_OPERATOR_PROFILE.md) for general AI assistant op
 
 Personal homelab proof-of-concept with two goals:
 
-1. **Hybrid local/cloud LLM routing.** Explore how to classify requests by complexity and route them to the right backend — keeping simple/moderate work on local hardware, escalating to cloud APIs only when needed. The hardware is capable but still limited in the real world, so smart routing matters. Develop reusable patterns for future projects (e.g., Mindcraft bot, Home Assistant integrations).
+1. **Hybrid local/cloud LLM routing.** Explore how to classify requests by complexity and route them to the right backend — keeping routine work on local hardware, escalating to cloud APIs only when needed. The hardware is capable but still limited in the real world, so smart routing matters. Develop reusable patterns for future projects (e.g., Mindcraft bot, Home Assistant integrations).
 
 2. **Automated improvement via session logs.** Build toward a closed loop where an autonomous agent consumes session logs from real usage (via Open WebUI), identifies poor routing decisions or weak responses, and either improves prompt templates directly or documents weaknesses for human review.
 
 Exposes an OpenAI-compatible API so any client that speaks the OpenAI format can use it transparently.
 
-A classifier model (Nemotron Orchestrator 8B AWQ) evaluates each request and assigns one of five routes:
+A classifier model (Nemotron Orchestrator 8B AWQ) evaluates each request and assigns one of four routes:
 
 | Route | Backend | When |
 |-------|---------|------|
-| SIMPLE → `primary` | Nemotron Nano 30B (local) | Greetings, trivial questions |
-| MODERATE → `primary` | Nemotron Nano 30B (local) | Coding, analysis, explanations |
+| MODERATE → `primary` | Nemotron Nano 30B (local) | Greetings, chat, coding, analysis, explanations |
 | COMPLEX → `xai` | Grok (xAI API) | Research-level, novel problems |
 | ENRICH → `xai` + `primary` | Grok → Nano 30B | Queries needing real-time/web data |
 | META → `primary` | Nano 30B (local) | Client-generated meta-prompts (follow-up suggestions, title generation, summaries) — skips classification |
@@ -83,7 +82,6 @@ config/prompts/
   routing/
     system.md                   # Classification system prompt for Orchestrator 8B
     request.md                  # Classification request template
-    truncation_note.md          # Note injected when the query is truncated for classification
   xai/
     system.md                   # xAI system prompt (COMPLEX route — conciseness guidance)
   enrichment/
@@ -138,7 +136,7 @@ This is an exploratory project — architecture decisions are working hypotheses
 **Current decisions:**
 
 - **Single Flask process, synchronous.** All routing, enrichment, and forwarding happen in the request thread. Simple to follow and debug. Adequate for single-user homelab load.
-- **Router model is classifier-only.** The Orchestrator 8B model only classifies queries — it never generates responses. Both SIMPLE and MODERATE queries route to the primary model. This decouples classification quality from generation quality and enables swapping to purpose-built routing models without affecting response quality.
+- **Router model is classifier-only.** The Orchestrator 8B model only classifies queries — it never generates responses. MODERATE queries route to the primary model, COMPLEX to xAI. This decouples classification quality from generation quality and enables swapping to purpose-built routing models without affecting response quality.
 - **Classification via prompt, not code.** Routing decisions come from the classifier model responding to a prompt template, not from hardcoded rules. This makes the routing behavior tunable by editing markdown files, but means classification quality depends on the small model's judgment.
 - **Enrichment is a two-hop pipeline.** ENRICH queries hit xAI first (for real-time context), then inject that context into the request before forwarding to the primary model. The boundary between "fetch context" and "generate response" is explicit — two separate API calls with the handoff visible in session logs.
 - **Session logs as the observability layer.** Every routed request writes a full-lifecycle JSON file. This is the primary way to understand what the system did and why. No metrics, no dashboards — just inspectable files.
@@ -189,7 +187,7 @@ Each session file contains:
 | `user_query` | The original user message (truncated to 500 chars) |
 | `client_messages` | Full original messages array from the client |
 | `route` | Which route was chosen (`primary`, `xai`, `enrich`, `meta`) |
-| `classification_raw` | The raw classifier output (e.g., `"SIMPLE"`) |
+| `classification_raw` | The raw classifier output (e.g., `"MODERATE"`) |
 | `classification_ms` | How long classification took |
 | `steps[]` | Ordered list of API calls made — each with `step`, `provider`, `url`, `model`, `messages_sent`, `params`, `response_content`, `duration_ms`, `status`, `finish_reason` |
 | `total_ms` | End-to-end request time |
@@ -197,7 +195,7 @@ Each session file contains:
 
 **What to look for when evaluating quality:**
 
-- **Misclassifications**: A `MODERATE` query that went to xAI unnecessarily (wasted cloud call), or a `COMPLEX` query that stayed local (poor answer quality)
+- **Misclassifications**: A MODERATE query that went to xAI unnecessarily (wasted cloud call), or a COMPLEX query that stayed local (poor answer quality)
 - **Enrichment failures**: `enrich` route where the xAI context step returned empty or irrelevant content
 - **Latency outliers**: `classification_ms` or step `duration_ms` values that seem abnormally high
 - **Meta pipeline issues**: Truncation warnings in logs, or meta-prompts that weren't detected and went through classification instead

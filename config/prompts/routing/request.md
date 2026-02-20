@@ -1,10 +1,7 @@
-Classify this user query into one of four categories:
+Classify this user query into one of three categories:
 
-SIMPLE: Greetings, casual chat, basic questions with obvious answers (NOT questions about today, current time, current date, or anything happening right now)
-Examples: "Hello", "What is Python?", "How are you?"
-
-MODERATE: Explanations of concepts, coding help, standard analysis tasks
-Examples: "Explain binary search", "Debug this code", "Compare REST vs GraphQL"
+MODERATE: Greetings, casual chat, basic questions, explanations of concepts, coding help, standard analysis tasks
+Examples: "Hello", "What is Python?", "How are you?", "Explain binary search", "Debug this code", "Compare REST vs GraphQL"
 
 COMPLEX: Research-level questions, novel problem-solving, advanced multi-domain analysis, cutting-edge topics, requires deep expertise
 Examples: "Design a novel algorithm for...", "Analyze quantum computing implications...", "Propose new cryptographic methods..."
@@ -13,5 +10,4 @@ ENRICH: Questions that require current events, recent news, real-time data, toda
 Examples: "What happened in the news today?", "What is the current price of Bitcoin?", "Who won the latest election?", "What are the newest features in Python 3.14?", "What is today's date?", "What day is it?", "Is the library open tomorrow?", "What's the schedule for next week?", "Tell me about the history of [specific school]", "What is [company name] known for?"
 
 User query: "{query}"
-{truncation_note}
-Respond with ONLY ONE WORD: SIMPLE, MODERATE, COMPLEX, or ENRICH
+Respond with ONLY ONE WORD: MODERATE, COMPLEX, or ENRICH

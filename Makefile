@@ -96,24 +96,14 @@ health: ## Check health of all services (verbose)
 	@$(COMPOSE) ps
 	@echo ""
 	@echo "=== Health Checks ==="
-	@echo "AI Router:"
+	@echo "AI Router (includes backend health):"
 	@curl -s http://localhost/health | jq . || echo "  ❌ Not responding"
-	@echo ""
-	@echo "Router Model:"
-	@curl -s http://localhost/router/health | jq . || echo "  ❌ Not responding"
-	@echo ""
-	@echo "Primary Model:"
-	@curl -s http://localhost/primary/health | jq . || echo "  ❌ Not responding"
 	@echo ""
 	@echo "Traefik:"
 	@docker inspect --format='{{.State.Health.Status}}' traefik 2>/dev/null || echo "  ❌ Not running"
 
-models: ## List available models
-	@echo "=== Router Models ==="
-	@curl -s http://localhost/router/v1/models | jq .
-	@echo ""
-	@echo "=== Primary Models ==="
-	@curl -s http://localhost/primary/v1/models | jq .
+models: ## List available models (via ai-router virtual model)
+	@curl -s http://localhost/v1/models | jq .
 
 gpu: ## Show GPU status
 	nvidia-smi
@@ -218,13 +208,13 @@ doc-review: ## Run doc-review agent to check docs against code
 boardroom-review: ## Run Improvement Board cycle (CEO → Challenger → QA)
 	$(PYTHON) agents/boardroom_run.py
 
-test-router: ## Test router model with sample request
-	curl -X POST http://localhost/router/v1/chat/completions \
+test-router: ## Test router model with sample request (via container network)
+	docker exec vllm-router curl -s -X POST http://localhost:8001/v1/chat/completions \
 		-H "Content-Type: application/json" \
 		-d '{"model": "cyankiwi/Nemotron-Orchestrator-8B-AWQ-4bit", "messages": [{"role": "user", "content": "Hello, how are you?"}], "max_tokens": 50}'
 
-test-primary: ## Test primary model with sample request
-	curl -X POST http://localhost/primary/v1/chat/completions \
+test-primary: ## Test primary model with sample request (via container network)
+	docker exec vllm-primary curl -s -X POST http://localhost:8000/v1/chat/completions \
 		-H "Content-Type: application/json" \
 		-d '{"model": "unsloth/NVIDIA-Nemotron-3-Nano-30B-A3B-NVFP4", "messages": [{"role": "user", "content": "Explain quantum computing briefly"}], "max_tokens": 200}'
 

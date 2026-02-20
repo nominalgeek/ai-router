@@ -4,17 +4,16 @@ Homelab experimentation with LLM request routing. Intelligently routes incoming 
 
 ## How It Works
 
-A classifier model ([Nemotron Orchestrator 8B AWQ](https://huggingface.co/cyankiwi/Nemotron-Orchestrator-8B-AWQ-4bit)) evaluates each request and assigns one of five routes:
+A classifier model ([Nemotron Orchestrator 8B AWQ](https://huggingface.co/cyankiwi/Nemotron-Orchestrator-8B-AWQ-4bit)) evaluates each request and assigns one of four routes:
 
 | Route | Backend | Model | Use Case |
 |---|---|---|---|
-| SIMPLE | Primary (local) | Nemotron Nano 30B | Greetings, trivial questions |
-| MODERATE | Primary (local) | Nemotron Nano 30B | Coding, analysis, explanations |
+| MODERATE | Primary (local) | Nemotron Nano 30B | Greetings, chat, coding, analysis, explanations |
 | COMPLEX | xAI API | Grok | Research-level, novel problems |
 | ENRICH | xAI + Primary | Grok → Nano 30B | Queries needing real-time/web data |
 | META | Primary (local) | Nemotron Nano 30B | Client-generated meta-prompts (skips classification) |
 
-The classifier only classifies — it never generates responses. Both SIMPLE and MODERATE route to the same primary model. The META route auto-detects client-generated meta-prompts (follow-up suggestions, title generation, summaries) and bypasses classification entirely.
+The classifier only classifies — it never generates responses. MODERATE queries route to the local primary model, COMPLEX queries to the cloud. The META route auto-detects client-generated meta-prompts (follow-up suggestions, title generation, summaries) and bypasses classification entirely.
 
 Exposes an OpenAI-compatible API so any client that speaks the OpenAI format (e.g., Open WebUI) can use it transparently. The `/v1/models` endpoint presents a single virtual model (`ai-router` by default, configurable via `VIRTUAL_MODEL`).
 

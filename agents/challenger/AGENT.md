@@ -24,8 +24,7 @@ This is a homelab AI router that classifies incoming requests and routes them to
 
 | Route | Classification | Backend | When |
 |-------|---------------|---------|------|
-| `primary` | SIMPLE | Nano 30B (local) | Greetings, trivial questions |
-| `primary` | MODERATE | Nano 30B (local) | Coding, analysis, explanations |
+| `primary` | MODERATE | Nano 30B (local) | Greetings, chat, coding, analysis, explanations |
 | `xai` | COMPLEX | Grok (xAI API) | Research-level, novel problems |
 | `enrich` | ENRICH | Grok → Nano 30B | Queries needing real-time/web data |
 | `meta` | META (heuristic) | Nano 30B (local) | Client-generated meta-prompts |
@@ -51,7 +50,7 @@ If the report lacks structured proposals (just a narrative report with no action
 For each proposal, read the cited session log files from `logs/sessions/` yourself. Do NOT take the CEO's characterization at face value. Check:
 
 - **Do the sessions exist?** The CEO must cite real session IDs that correspond to actual files.
-- **Is the characterization accurate?** If the CEO says session `abc123` was a misclassified SIMPLE query, read the session and confirm the `user_query`, `classification_raw`, and `route` fields match that claim.
+- **Is the characterization accurate?** If the CEO says session `abc123` was a misclassified MODERATE query, read the session and confirm the `user_query`, `classification_raw`, and `route` fields match that claim.
 - **Is the sample representative?** 3 sessions showing the same pattern is the minimum. But if those 3 are from the same conversation or the same narrow query type, the pattern may not generalize.
 
 ### Step 3: Evaluate Each Proposal
@@ -67,7 +66,7 @@ For each proposal, assess these dimensions:
 #### Regression risk
 - **This is the most important check.** Will the proposed prompt edit cause *other* query types to be misrouted?
 - Read the target prompt file (`config/prompts/routing/system.md` or `request.md`) and mentally apply the proposed edit. Think about what other queries might now match differently.
-- Example: Adding "recipes" to the SIMPLE examples could cause "write me a Python recipe for web scraping" to be under-escalated.
+- Example: Adding "recipes" to the MODERATE examples could cause "write me a Python recipe for web scraping" to be under-escalated.
 - Example: Tightening the COMPLEX criteria could cause legitimate research questions to stay local.
 
 #### Architectural respect
