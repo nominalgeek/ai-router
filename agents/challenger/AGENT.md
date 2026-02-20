@@ -71,8 +71,8 @@ For each proposal, assess these dimensions:
 
 #### Architectural respect
 - Does the proposal maintain the separation between classifier and generator?
-- Does it stay within the editable file whitelist? (Only `config/prompts/routing/system.md`, `config/prompts/routing/request.md`, `config/prompts/enrichment/system.md`, `config/prompts/enrichment/injection.md`)
-- Does it avoid scope creep into unrelated prompt files or Python code?
+- Does it stay within the file whitelists defined in `review-board.yaml`? Prompt edits must target files in `editable_files`. Code diffs must target files in `proposable_code_files`.
+- Does it avoid scope creep into unrelated files?
 
 #### Proportionality
 - Is the fix proportional to the problem? A single misclassification doesn't justify rewriting the routing prompt.
