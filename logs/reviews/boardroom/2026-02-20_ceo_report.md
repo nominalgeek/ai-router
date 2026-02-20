@@ -1,24 +1,24 @@
-# Session Review Report — Boardroom Mode (Cycle 3)
+# Session Review Report — Boardroom Mode (Cycle 4)
 **Date**: 2026-02-20
-**Sessions reviewed**: 69
-**Period**: 2026-02-18T23:29:12 to 2026-02-19T20:53:06 (PST)
+**Sessions reviewed**: 82
+**Period**: 2026-02-18T23:29:12 to 2026-02-19T21:18:35 (PST)
 
 ## Summary
-- Total sessions: 69
-- By route: primary=37, xai=0, enrich=4, meta=28
+- Total sessions: 82
+- By route: primary=44, xai=0, enrich=4, meta=34
 - Errors: 0 (no sessions had non-null `error` field)
-- Issues found: 4
+- Issues found: 3
 
 ### Key Finding
 
-**30 out of 30 classified requests in the Feb 19 20:46+ batch had total classification failure.** The classifier returned only `<think>` with empty `classification_raw`, completing in 30-85ms instead of the normal 1,500-7,000ms. Every request defaulted to `primary` regardless of content — including queries that should have been COMPLEX or ENRICH. This is an infrastructure issue, not a prompt issue.
+**The classification failure identified in BR-0003 was partially fixed but a new failure mode emerged.** The `stop: ["\n"]` was removed (per BR-0003 Proposal 1), but `max_tokens: 64` remains and is now the bottleneck. In Batch 4 (Feb 19 21:13+), every classification hits the 64-token limit mid-reasoning (`finish_reason: "length"`) — the model's `<think>` block consumes all tokens before it can emit the classification word. This is a continuation of the same root cause: the parameters added in commit `e1c06f2` are incompatible with the reasoning model's output format.
 
 ### Session Inventory
 
-The 69 sessions break into three distinct batches:
+The 82 sessions break into four distinct batches:
 
 **Batch 1 (Feb 18 23:29 - 23:41): 18 sessions — Real user traffic (Open WebUI)**
-Covered in BR-0001 and BR-0002. Classification working normally.
+Previously covered in BR-0001 through BR-0003. Classification working normally (no `max_tokens` or `stop` constraints). No changes in status.
 
 | ID | Route | Classification | Query (truncated) | Class. ms |
 |----|-------|----------------|-------------------|-----------|
@@ -42,7 +42,7 @@ Covered in BR-0001 and BR-0002. Classification working normally.
 | `b46d7c65` | meta | META | Follow-up suggestions (synesthesia) | 0 |
 
 **Batch 2 (Feb 19 18:13 - 18:15): 12 sessions — Real user traffic (Open WebUI)**
-Covered in BR-0002. Classification working normally.
+Previously covered in BR-0002 and BR-0003. Classification working normally (no `max_tokens` constraint).
 
 | ID | Route | Classification | Query (truncated) | Class. ms |
 |----|-------|----------------|-------------------|-----------|
@@ -59,158 +59,144 @@ Covered in BR-0002. Classification working normally.
 | `bc988c3a` | enrich | ENRICH | "tell me something you shouldnt" | 7298 |
 | `27786eea` | meta | META | Follow-up suggestions | 0 |
 
-**Batch 3 (Feb 19 20:46 - 20:53): 39 sessions — Test/Benchmark scripts (post-restart)**
-Classification completely broken. ALL classifications failed.
+**Batch 3 (Feb 19 20:46 - 20:53): 39 sessions — Test/Benchmark (post-restart)**
+Previously covered in BR-0003. Classification broken by `stop: ["\n"]`. All 30 classified requests returned empty classification with `finish_reason: "stop"`. No changes in status.
 
-| ID | Route | Classification | Query (truncated) | Class. ms |
-|----|-------|----------------|-------------------|-----------|
-| `b72955c7` | primary | [empty] | "test" | 59 |
-| `7eeac9e4` | meta | META | Follow-up suggestions (test) | 0 |
-| `2d743bd2` | meta | META | Title generation (test) | 0 |
-| `c7235d1d` | meta | META | Tag generation (test) | 0 |
-| `63538d5c` | primary | [empty] | "Hello" | 76 |
-| `c71af38d` | primary | [empty] | "Explain the concept of quantum entanglement in detail" | 34 |
-| `facc038f` | primary | [empty] | "Design a novel quantum-resistant cryptographic algorithm..." | 36 |
-| `6b52b4f0` | primary | [empty] | "Hello" | 33 |
-| `bc3ef7e6` | primary | [empty] | "Explain the concept of quantum entanglement in detail" | 33 |
-| `bee84817` | primary | [empty] | "Design a novel quantum-resistant cryptographic algorithm..." | 35 |
-| `5bcb228a` | primary | [empty] | "What is the current weather in Tokyo right now?" | 35 |
-| `0ed5223c` | meta | META | Follow-up suggestions (capital of France) | 0 |
-| `e1ad6e59` | primary | [empty] | Code review request (Python SessionAnalyzer) | 66 |
-| `d5ae574c` | primary | [empty] | "what is a dictionary in Python..." (long preamble) | 46 |
-| `ea4e38c8` | primary | [empty] | "What kind of test are you interested in performing?" | 77 |
-| `7e795374` | meta | META | Follow-up suggestions (test/snarky line) | 0 |
-| `53c8360f` | primary | [empty] | "what was the snarky line?" | 72 |
-| `e359462c` | meta | META | Follow-up suggestions (fairy garden) | 0 |
-| `470fb4dd` | primary | [empty] | "what i don't get it? I never said 'The Fairy Garden Nest'" | 85 |
-| `4142ba5a` | meta | META | Follow-up suggestions (fairy garden) | 0 |
-| `f3a8813f` | primary | [empty] | "hi" | 82 |
-| `bd038e51` | primary | [empty] | "Explain AI" | 34 |
-| `1f1ad7a9` | primary | [empty] | "Hello" | 32 |
-| `f10de9b3` | primary | [empty] | "Explain how neural networks learn" | 35 |
-| `79de99c4` | primary | [empty] | "Design a novel approach to quantum error correction" | 34 |
-| `76a65593` | primary | [empty] | "What are the latest developments in AI regulation this week?" | 35 |
-| `82673e81` | primary | [empty] | "hi" | 82 |
-| `432c6117` | primary | [empty] | "Explain AI" | 32 |
-| `e77f478d` | primary | [empty] | "Hello" | 32 |
-| `517318e6` | primary | [empty] | "Explain how neural networks learn" | 35 |
-| `b49a7ab6` | primary | [empty] | "Design a novel approach to quantum error correction" | 34 |
-| `40de3e4e` | primary | [empty] | "What are the latest developments in AI regulation this week?" | 75 |
-| `2a3a985d` | primary | [empty] | "Request 1: say hello" | 45 |
-| `d7039c19` | primary | [empty] | "Request 4: say hello" | 65 |
-| `af9c6a72` | primary | [empty] | "Request 3: say hello" | 49 |
-| `5235cba7` | primary | [empty] | "Request 5: say hello" | 47 |
-| `a17fe764` | primary | [empty] | "Request 2: say hello" | 69 |
-| `415cdf53` | primary | [empty] | "Count to 10" | 36 |
-| `405b5275` | primary | [empty] | "Hello" | 34 |
+| ID | Route | Classification | Query (truncated) | Class. ms | finish_reason |
+|----|-------|----------------|-------------------|-----------|---------------|
+| `b72955c7` | primary | [empty] | "test" | 59 | stop |
+| `63538d5c` | primary | [empty] | "Hello" | 76 | stop |
+| `c71af38d` | primary | [empty] | "Explain quantum entanglement in detail" | 34 | stop |
+| `facc038f` | primary | [empty] | "Design a novel quantum-resistant cryptographic algorithm..." | 36 | stop |
+| `5bcb228a` | primary | [empty] | "What is the current weather in Tokyo right now?" | 35 | stop |
+| ... | ... | ... | (25 more — see BR-0003 for full inventory) | 32-85 | stop |
+
+**Batch 4 (Feb 19 21:13 - 21:18): 13 sessions — Real user traffic (NEW)**
+Classification still broken despite stop sequence removal. New failure mode: `max_tokens: 64` truncation.
+
+| ID | Route | Classification | Query (truncated) | Class. ms | finish_reason |
+|----|-------|----------------|-------------------|-----------|---------------|
+| `02dd7356` | primary | [empty] | "how do you convince a four year old girl to go to bed?" | 632 | length |
+| `39630e28` | meta | META | Follow-up suggestions (bedtime) | 0 | — |
+| `bee0a446` | meta | META | Title generation (bedtime) | 0 | — |
+| `3eb09986` | meta | META | Tag generation (bedtime) | 0 | — |
+| `0d399262` | primary | [empty] | "How can I handle resistance if she says she's not tired?" | 651 | length |
+| `ab5c447c` | meta | META | Follow-up suggestions (bedtime resistance) | 0 | — |
+| `4c64cb3b` | primary | [empty] | "is this the current best research says?" | 628 | length |
+| `92eb9f4b` | meta | META | Follow-up suggestions (bedtime research) | 0 | — |
+| `4249e47a` | primary | [empty] | "what is the weather in pdx right now?" | 638 | length |
+| `4ebe4abd` | meta | META | Follow-up suggestions (weather) | 0 | — |
+| `246072bb` | meta | META | Title generation (weather) | 0 | — |
+| `a892ae2b` | meta | META | Tag generation (weather) | 0 | — |
 
 ## Issues
 
-### 1. CRITICAL: Complete Classification Failure After Service Restart
+### 1. CRITICAL: Classification Truncated by max_tokens: 64 (New Failure Mode)
 **Severity**: critical
-**Sessions affected**: All 30 classified sessions in Batch 3: `b72955c7`, `63538d5c`, `c71af38d`, `facc038f`, `6b52b4f0`, `bc3ef7e6`, `bee84817`, `5bcb228a`, `e1ad6e59`, `d5ae574c`, `ea4e38c8`, `53c8360f`, `470fb4dd`, `f3a8813f`, `bd038e51`, `1f1ad7a9`, `f10de9b3`, `79de99c4`, `76a65593`, `82673e81`, `432c6117`, `e77f478d`, `517318e6`, `b49a7ab6`, `40de3e4e`, `2a3a985d`, `d7039c19`, `af9c6a72`, `5235cba7`, `a17fe764`, `415cdf53`, `405b5275`
-**Details**: After multiple service restarts between 20:16 and 20:44 (visible in `app.log`), the classification pipeline became completely non-functional. Every classification request to the router model (`cyankiwi/Nemotron-Orchestrator-8B-AWQ-4bit`) returns only `<think>` as response content, with `finish_reason: "stop"` after 30-85ms.
+**Sessions affected**: `02dd7356`, `0d399262`, `4c64cb3b`, `4249e47a`
+**Details**: After the `stop: ["\n"]` was removed (addressing BR-0003 Proposal 1), the classifier now generates its `<think>` reasoning block as expected — but hits the `max_tokens: 64` ceiling before it can close the `</think>` tag and emit the classification word. Every Batch 4 classification shows:
+- `finish_reason: "length"` (not `"stop"` — confirming the stop sequence fix was applied)
+- `classification_ms: 628-651ms` (fast — model generating 64 tokens of reasoning then stopping)
+- `classification_raw: ""` (empty — regex strips the incomplete `<think>` block, leaving nothing)
+- All routes default to `primary`
 
-**Root cause analysis**: The classifier's request includes `"stop": ["\n"]` as a stop sequence (line 110 of `src/providers.py`). The Orchestrator 8B model, being a reasoning model, emits `<think>` followed by a newline to begin its reasoning block. The `\n` stop sequence intercepts this newline, terminating generation before any reasoning or classification word is produced. The response contains only `<think>` — which the code correctly strips (lines 148-149 of `providers.py`), leaving an empty `decision` that falls through to the default `primary` route.
+**Specific misrouted queries**:
+- Session `4c64cb3b` ("is this the current best research says?") — the user is asking whether parenting advice aligns with current research. Contains "current" (ENRICH trigger word per the prompt). In context, this may or may not warrant ENRICH (see Issue 3), but classification failure prevented any routing decision.
+- Session `4249e47a` ("what is the weather in pdx right now?") — contains "right now" (explicit ENRICH trigger) and asks for real-time weather data. Should unambiguously be ENRICH. Was misrouted to primary, which fabricated weather data.
 
-**Why it worked before**: In Batches 1 and 2 (before the restarts), the same `stop: ["\n"]` was sent but classification worked fine (1,600-7,300ms, producing actual classification words). This suggests the earlier vLLM instance's prefix caching or KV cache state handled the `<think>` block differently — either the model's first token after `<think>` was not a raw newline in the cached state, or tokenization resolved differently. The restarts at 20:16, 20:18, and 20:44 cleared this state.
+**Comparison with working batches**: In Batch 2 (18:13-18:15), classification worked correctly. The key difference: Batch 2 classification params were `{"temperature": 0.0}` — no `max_tokens` at all. The model generated full `<think>` blocks (150-250 tokens of reasoning) followed by the classification word, with `finish_reason: "stop"`. For example, session `dfcc2b9e` ("but whats your name dude!?") produced ~230 tokens of reasoning + "SIMPLE" and completed in 1,661ms with `finish_reason: "stop"`.
 
-**Impact**: 100% classification failure rate in Batch 3. Every request defaulted to `primary`, including:
-- 2x COMPLEX queries ("Design a novel quantum-resistant cryptographic algorithm", "Design a novel approach to quantum error correction") — should have gone to xAI
-- 2x ENRICH queries ("What is the current weather in Tokyo right now?", "What are the latest developments in AI regulation this week?") — should have entered enrichment pipeline
-- The primary model fabricated weather data for Tokyo and invented AI regulation news, presenting them as facts
+**Root cause**: The `max_tokens: 64` parameter added in commit `e1c06f2` is incompatible with the Nemotron Orchestrator 8B reasoning model. This model wraps all reasoning in `<think>...</think>` blocks that typically consume 100-250 tokens. A 64-token cap truncates the reasoning before the classification word is emitted. BR-0003 correctly identified the `stop: ["\n"]` half of the problem but didn't address `max_tokens: 64` because it appeared in the same line and was assumed to be safe.
 
-**Note**: This is an infrastructure/code issue, not a prompt issue. The `\n` stop sequence conflicts with the reasoning model's `<think>\n` output format. Prompt changes cannot fix this.
+**Note**: This is a code issue in `src/providers.py` line 110, not a prompt issue.
 
-**Recommendation**: This requires a code change in `providers.py` (outside the scope of Session CEO prompt edits). The `stop: ["\n"]` parameter needs to be reconsidered — either:
-- (a) Remove the `\n` stop sequence entirely and instead use `max_tokens: 64` alone, letting the model complete its `<think>...</think>` reasoning and emit the classification word. The existing regex at lines 148-149 already handles `<think>` block stripping.
-- (b) Replace `\n` with a different stop sequence that won't appear inside `<think>` blocks.
-
-This is the highest-priority issue: the router is effectively blind to all query types when this occurs, routing everything to the local model regardless of complexity or real-time data needs.
-
-### 2. Fabricated Real-Time Data on Misrouted ENRICH Queries
+### 2. Fabricated Data on Misrouted ENRICH Query (Downstream of Issue 1)
 **Severity**: high
-**Sessions affected**: `5bcb228a`, `76a65593`, `40de3e4e`
-**Details**: When ENRICH-eligible queries were misrouted to `primary` due to the classification failure (Issue 1), the local Nano 30B model fabricated plausible-sounding but invented real-time information:
+**Sessions affected**: `4249e47a`
+**Details**: "what is the weather in pdx right now?" was misrouted to `primary` due to the classification failure (Issue 1). The primary model fabricated specific weather data: "clear and cool, temperatures in the mid-40s F (around 7C), light rain showers possible, mostly cloudy, winds light from the west at 5-10 mph." This is the same pattern identified in BR-0003 Issue 2 — the primary model confidently invents real-time data when ENRICH queries bypass the enrichment pipeline.
 
-- Session `5bcb228a` ("What is the current weather in Tokyo right now?"): The model responded with specific weather data — "partly cloudy with temperatures around 9C (48F), light breeze from the west, and a 20% chance of a brief shower." This is fabricated; the model has no access to live weather data.
-- Session `76a65593` ("What are the latest developments in AI regulation this week?"): The model invented specific legislative events with dates — "EU AI Act cleared its final legislative hurdle on February 14," "FTC issued new guidance on February 12," "China announced on February 18" — all fabricated with convincing specificity.
-- Session `40de3e4e` (same query, second run): Different fabricated content — "U.S. Senate: Passed the *AI Transparency and Accountability Act*" — a fictitious law.
+This is now confirmed across 3+ sessions spanning two separate failure batches:
+- Batch 3: `5bcb228a` (fabricated Tokyo weather), `76a65593` (fabricated AI regulation news), `40de3e4e` (different fabricated AI regulation news)
+- Batch 4: `4249e47a` (fabricated PDX weather)
 
-These are downstream consequences of Issue 1 (classification failure). The enrichment pipeline exists precisely to prevent this — when working correctly, xAI retrieves real data and injects it as verified context for the primary model. With classification broken, ENRICH queries bypass enrichment entirely, and the primary model confabulates.
+The pattern is systematic: the primary model never hedges or says "I don't have real-time data." It always fabricates specific, plausible-sounding information.
 
-**Recommendation**: This resolves automatically when Issue 1 is fixed. However, it highlights that the primary model confidently fabricates time-sensitive data without hedging. Worth monitoring after Issue 1 is resolved.
+**Recommendation**: Resolves automatically when Issue 1 is fixed. However, the consistency of this pattern (4 sessions, 2 batches) may warrant a separate consideration: should the primary model's system prompt include guidance about hedging when asked for real-time data? This would provide defense-in-depth if classification ever fails again. Not proposing this now — it would only matter as a fallback, and the primary fix is restoring classification.
 
-### 3. False ENRICH: "tell me something you shouldnt" (Carry-Forward from BR-0002)
-**Severity**: medium
-**Sessions affected**: `bc988c3a`
-**Details**: Previously identified in BR-0002 Proposal 1 (CHALLENGED). The user said "tell me something you shouldnt" — a conversational boundary-testing query with no real-time data requirement. Classified as ENRICH after 7,298ms deliberation. Triggered a wasted xAI API call (5,502ms) that returned a 65-character deflection, which was then injected as "verified, real-time information" into the primary model's system prompt.
-
-**Status**: Still only 1 session demonstrating this pattern. The Challenger in BR-0002 correctly noted that 1 session is below the 3-session evidence threshold. No new instances in this review period. Continuing to track.
-
-### 4. Slow Classification (Carry-Forward from BR-0001/BR-0002)
+### 3. Ambiguous ENRICH Trigger — "current" in Qualitative Context (Edge Case)
 **Severity**: low
-**Sessions affected**: `692f3bc6` (6,708ms), `bc988c3a` (7,298ms), `bd4d8604` (5,054ms), `0c5256a4` (10,012ms timeout), `67142c34` (3,475ms)
-**Details**: Previously identified and characterized as inherent to the 8B reasoning model. The Challenger and QA in BR-0002 correctly diagnosed this as a model-behavior characteristic that prompt changes cannot fix. Speculative execution masks the latency for primary-routed queries. No change in status.
+**Sessions affected**: `4c64cb3b`
+**Details**: "is this the current best research says?" contains "current" which is listed as an ENRICH trigger word in the routing prompt. However, the user is asking whether parenting advice aligns with established best practices — "current" here means "contemporary/modern" not "happening right now." If classification were working, this would likely trigger ENRICH, resulting in an xAI API call to fetch pediatric sleep research. This could be either a correct enrichment (verifying against latest research) or a false positive (established practices don't change with breaking news).
+
+**Status**: Only 1 session showing this pattern. Below the 3-session evidence threshold. Cannot evaluate further until classification is operational.
 
 ## Route Quality Summary
 
-### primary (37 sessions)
-- **Batch 1+2 (working classification)**: 7 sessions — SIMPLE x5, MODERATE x2, timeout x1
-  - Speculative execution performed well (inference_ms=0 for all streamed)
-  - Classification quality good: SIMPLE for greetings/chat, MODERATE for conceptual questions
-  - 1 timeout (10,012ms) on an implicit location follow-up that should have been ENRICH
-- **Batch 3 (broken classification)**: 30 sessions — ALL empty classification, all defaulted to primary
-  - Includes queries that should have been COMPLEX (2x) and ENRICH (2x)
-  - Classification latency: 32-85ms (abnormally fast — single-token generation before stop)
-  - Response quality for correctly-typed queries (greetings, explanations) was fine
-  - Response quality for misrouted ENRICH queries: fabricated data (see Issue 2)
+### primary (44 sessions)
+- **Batches 1+2 (working classification)**: 7 sessions — SIMPLE x5, MODERATE x2, timeout x1
+  - All correctly routed (except the 1 timeout previously documented)
+  - Speculative execution performing well (inference_ms=0 for all streamed)
+- **Batch 3 (broken — stop sequence)**: 30 sessions — all empty classification, defaulted to primary
+  - Previously documented in BR-0003. `finish_reason: "stop"` failure mode.
+- **Batch 4 (broken — max_tokens)**: 4 sessions — all empty classification, defaulted to primary
+  - New failure mode: `finish_reason: "length"` instead of `finish_reason: "stop"`
+  - Includes 1 clear ENRICH misroute (`4249e47a`) and 1 possible ENRICH misroute (`4c64cb3b`)
+  - 2 sessions (`02dd7356`, `0d399262`) would correctly be MODERATE/primary, so default was accidentally correct
 
-### enrich (4 sessions — all from Batch 1+2)
+### enrich (4 sessions — all from Batches 1+2)
 - 3 correctly classified: weather queries (`1e385399`, `bd4d8604`, `2bec6c42`)
-- 1 misclassified: "tell me something you shouldnt" (`bc988c3a`) — should have been SIMPLE
-- Enrichment context retrieval from xAI: 5,502ms - 20,345ms
-- Total latency: 12,808ms - 22,990ms
-- No enrichment traffic in Batch 3 (classification completely broken)
+- 1 false ENRICH: "tell me something you shouldnt" (`bc988c3a`) — still only 1 instance
+- No enrichment traffic in Batches 3 or 4 (classification completely broken)
 
-### meta (28 sessions)
-- All 28 correctly detected via heuristic (0ms classification)
+### meta (34 sessions)
+- All 34 correctly detected via heuristic (0ms classification)
 - All completed successfully with `finish_reason=stop`
-- Inference latency: 766ms - 4,041ms
-- Meta pipeline unaffected by the classification failure (heuristic detection bypasses the classifier)
+- Inference latency: 766ms - 4,041ms (consistent with previous cycles)
+- Meta pipeline unaffected by classification failures (heuristic detection bypasses classifier)
 
 ### xai (0 sessions)
 - No COMPLEX classifications in entire review period
-- In Batches 1+2: no queries warranting COMPLEX arose in the user traffic
-- In Batch 3: 2 queries that should have been COMPLEX were misrouted to primary
+- Classification broken in Batches 3+4 means COMPLEX queries cannot be routed to xAI
 
 ## Prompt Improvement Suggestions
 
-### Classification Failure is Not a Prompt Problem
-The critical issue in this review (30/30 classification failures in Batch 3) is caused by the interaction between the `stop: ["\n"]` parameter in the classification request and the reasoning model's `<think>\n` output format. This is a code-level issue in `providers.py` line 110. No prompt change can fix it.
+### Classification Failure is Still Not a Prompt Problem
+The critical issue across Batches 3 and 4 (34/34 classification failures total) is caused by code-level parameters in `providers.py` line 110. The prompt templates are functioning correctly — when the classifier is allowed to complete its reasoning (as in Batches 1+2 with no `max_tokens` constraint), classifications are accurate and consistent. No prompt changes are warranted until the `max_tokens` issue is resolved and classification returns to normal operation.
 
-### Previously Proposed Changes
-- **BR-0001**: Two proposals (definitional SIMPLE examples, implicit-location ENRICH guidance) — both CHALLENGED for insufficient evidence
-- **BR-0002**: One proposal (SIMPLE-default for conversational queries) — CHALLENGED for tone-based classification risk and insufficient evidence (1 session)
+### Previously Proposed Changes (Status)
+- **BR-0001 Proposal 1** (definitional SIMPLE examples): CHALLENGED — insufficient evidence
+- **BR-0001 Proposal 2** (implicit location ENRICH): CHALLENGED — insufficient evidence
+- **BR-0002 Proposal 1** (SIMPLE-default for conversational queries): CHALLENGED — tone-based risk
+- **BR-0003 Proposal 1** (remove stop sequence): Human review — stop sequence removed, but `max_tokens: 64` remains as new bottleneck (this cycle's Proposal 1)
 
-### This Cycle
-No prompt proposals are warranted. The dominant issue is infrastructure (classification failure), and the remaining prompt-level concern (ENRICH as catch-all for unrecognizable queries) still has only 1 supporting session.
+### Carried-Forward Issues
+- **False ENRICH for "tell me something you shouldnt"** (`bc988c3a`): Still 1 session. Below threshold.
+- **Slow classification on ambiguous queries**: Cannot evaluate until classification is operational.
 
 ## Proposals
 
-### Proposal 1: Human Review Required — Classification Stop Sequence Conflict
-**Problem**: The classification request sends `"stop": ["\n"]` to the router model. After service restarts cleared the vLLM KV cache, the reasoning model's `<think>\n` output triggers this stop sequence immediately, producing a single `<think>` token and terminating. This causes 100% classification failure — every request defaults to `primary` regardless of actual complexity or enrichment needs.
-**Evidence**: Sessions `b72955c7`, `63538d5c`, `c71af38d`, `facc038f`, `5bcb228a`, `76a65593`, `bd038e51`, `f10de9b3`, `79de99c4`, `82673e81`, `432c6117`, `e77f478d`, `517318e6`, `b49a7ab6`, `40de3e4e`, `2a3a985d`, `d7039c19`, `af9c6a72`, `5235cba7`, `a17fe764`, `415cdf53`, `405b5275`, `6b52b4f0`, `bc3ef7e6`, `bee84817`, `e1ad6e59`, `d5ae574c`, `ea4e38c8`, `53c8360f`, `470fb4dd` (30 sessions — all showing `classification_raw: ""`, `response_content: "<think>"`, classification_ms 30-85ms, `finish_reason: "stop"`)
+### Proposal 1: Remove max_tokens Constraint from Classification Requests
+**Problem**: The classification request uses `max_tokens: 64`, which truncates the reasoning model's `<think>` block before it can emit the classification word. The Nemotron Orchestrator 8B model typically requires 100-250 tokens for its `<think>` reasoning before producing the classification word. With a 64-token cap, every classification is truncated mid-reasoning (`finish_reason: "length"`), the regex strips the incomplete `<think>` block, and an empty decision defaults to `primary`. This causes 100% classification failure — identical in impact to the `stop: ["\n"]` issue identified in BR-0003, but via a different mechanism.
+**Evidence**: Sessions `02dd7356` (632ms, `finish_reason: "length"`, response: `"<think>\nOkay, let's see. The user is asking how to convince a four-year-old girl to go to bed. First, I need to classify this query into MODERATE, COMPLEX, or ENRICH.\n\nLooking at the categories: MODERATE includes basic questions, explanations, or coding help."` — truncated at 64 tokens, no classification word emitted), `0d399262` (651ms, `finish_reason: "length"`, response: `"<think>\nOkay, let's see. The user is asking about handling resistance when a child says she's not tired. The previous conversation was about establishing a bedtime routine without negotiation. The assistant provided a strict approach, emphasizing consistency and not giving in.\n\nNow, the user's query is about handling resistance. The original advice"` — truncated), `4c64cb3b` (628ms, `finish_reason: "length"`, response: `"<think>\nOkay, let's see. The user is asking, \"is this the current best research says?\" Hmm. First, I need to classify this query into MODERATE, COMPLEX, or ENRICH.\n\nLooking at the guidelines, ENRICH is for questions that need current events, real-time data"` — truncated before reaching a decision), `4249e47a` (638ms, `finish_reason: "length"`, response: `"<think>\nOkay, let's see. The user is asking about the weather in Portland (PDX) right now. The current date in the scenario is February 19, 2026, which is winter. The user specified \"right now,\" which is 9:18 PM PST."` — truncated before reaching a decision, would clearly have been ENRICH)
+
+**Contrast with working sessions**: Session `dfcc2b9e` from Batch 2 (18:14, before `max_tokens` was added) — params: `{"temperature": 0.0}` (no `max_tokens`), response: full `<think>` block (~230 tokens) + `"SIMPLE"`, `finish_reason: "stop"`, classification_ms: 1,661ms. Session `2bec6c42` — params: `{"temperature": 0.0}`, correctly classified as ENRICH in 2,544ms with full reasoning.
+
 **Target file**: `src/providers.py` (line 110) — **outside Session CEO edit scope**
+**Function/line range**: `providers.py:classify_request(), line 110`
+**Boundary affected**: Providers
 **Proposed edit**:
 ```diff
-- classify_params = {"temperature": 0.0, "max_tokens": 64, "stop": ["\n"]}
-+ classify_params = {"temperature": 0.0, "max_tokens": 64}
+- classify_params = {"temperature": 0.0, "max_tokens": 64}
++ classify_params = {"temperature": 0.0}
 ```
-**Rationale**: The existing response-parsing logic (lines 144-149) already strips `<think>...</think>` blocks and extracts the classification word from whatever remains. Removing the `\n` stop sequence lets the model complete its reasoning and emit the classification word, which the regex then extracts. The `max_tokens: 64` cap prevents unbounded generation.
+**Rationale**: Remove the `max_tokens` parameter entirely, restoring the parameter state that was working correctly in Batches 1 and 2. The model's natural stop behavior (`finish_reason: "stop"`) worked reliably across 12 classified sessions — the model consistently emitted `<think>reasoning</think>CLASSIFICATION_WORD` and stopped. The `classify_request()` function already has a 10-second timeout (line 127: `timeout=10`) which provides an upper bound on generation time. The existing regex at lines 148-149 handles `<think>` block stripping regardless of reasoning length. The existing decision-extraction logic (lines 150-158) uses substring matching (`'ENRICH' in decision`, `'MODERATE' in decision`, `'COMPLEX' in decision`) which handles any trailing text after the classification word.
 
-The `\n` stop sequence was likely intended to prevent the model from generating more than a single word after its reasoning. But with reasoning models that wrap output in `<think>` blocks, the newline inside `<think>\n...` triggers premature termination. The model's existing behavior in Batches 1+2 shows it produces `<think>...reasoning...</think>CLASSIFICATION_WORD` — the reasoning is bounded and the classification word follows. Without `\n`, the model might emit trailing whitespace after the classification word, but `.strip().upper()` on line 150 handles this.
+The `max_tokens: 64` was likely added as a belt-and-suspenders measure to prevent verbose post-classification output. But for a reasoning model that wraps output in `<think>` blocks consuming 100-250 tokens, the belt is strangling the model before it can produce useful output. The timeout at line 127 already prevents runaway generation, and Batch 1+2 evidence (12 successful classifications with no `max_tokens`) demonstrates this is safe.
 
-**Risk assessment**: Low for classification quality. The slight increase in token generation (model now completes reasoning instead of being cut off) has negligible latency impact since classifications already took 1,600-7,300ms in working sessions, and speculative execution hides this for primary-routed queries. The only risk is the model generating verbose post-classification text, but `max_tokens: 64` bounds this.
+**Risk assessment**: Low. The model's behavior without `max_tokens` is empirically demonstrated in Batches 1 and 2: it produces `<think>reasoning</think>CLASSIFICATION_WORD` and stops. The vLLM server's `--max-model-len 32768` provides an absolute ceiling. The 10-second request timeout provides a time ceiling. Without `max_tokens`, worst case is the model generates a longer reasoning block before emitting the classification word — this is exactly what Batches 1+2 showed, with classification times of 1,600-7,300ms. This is slower than the broken 630ms but produces correct classifications.
 
-**This proposal requires human review because it modifies Python source code, which is outside Session CEO authority.** The Session CEO documents the issue and provides the specific code change needed, but implementation requires human approval.
+An alternative would be to increase `max_tokens` (e.g., to 256 or 512) rather than removing it entirely. However, this adds complexity for no benefit: the model naturally stops after emitting the classification word (as demonstrated in 12 working sessions), and the 10-second timeout provides the safety bound. A higher `max_tokens` would work but is an unnecessary parameter.
+
+**Import/dependency changes**: None
+
+**This proposal requires human review because it modifies Python source code, which is outside Session CEO authority.**

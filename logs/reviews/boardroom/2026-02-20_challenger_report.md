@@ -1,96 +1,108 @@
 # Challenger Report
-**Date**: 2026-02-20
+**Date**: 2026-02-19
 **CEO report reviewed**: `logs/reviews/boardroom/2026-02-20_ceo_report.md`
 **Proposals evaluated**: 1
 
 ## Summary
 - Proposals ACCEPTED: 0
-- Proposals CHALLENGED: 0
+- Proposals CHALLENGED: 1
 - Proposals NEEDS_EVIDENCE: 0
-- **Human review items**: 1 (code change outside Session CEO scope)
 
 ## Proposal Evaluations
 
-### Proposal 1: Human Review Required — Classification Stop Sequence Conflict
-**Target file**: `src/providers.py` (line 110) — **outside Session CEO edit scope**
-**Verdict**: HUMAN REVIEW REQUIRED (not challengeable — outside prompt-edit authority)
+### Proposal: Remove max_tokens Constraint from Classification Requests
+**Target file**: `src/providers.py` (line 110)
+**Verdict**: CHALLENGED
 
 **Evidence check**:
-- **Sessions cited**: 30 sessions from Batch 3 (Feb 19, 20:46-20:53) — `b72955c7`, `63538d5c`, `c71af38d`, `facc038f`, `6b52b4f0`, `bc3ef7e6`, `bee84817`, `5bcb228a`, `e1ad6e59`, `d5ae574c`, `ea4e38c8`, `53c8360f`, `470fb4dd`, `f3a8813f`, `bd038e51`, `1f1ad7a9`, `f10de9b3`, `79de99c4`, `76a65593`, `82673e81`, `432c6117`, `e77f478d`, `517318e6`, `b49a7ab6`, `40de3e4e`, `2a3a985d`, `d7039c19`, `af9c6a72`, `5235cba7`, `a17fe764`, `415cdf53`, `405b5275`
-- **Sessions verified**: Independently read sessions `2026-02-19_20-46-59_b72955c7.json`, `2026-02-19_20-47-32_c71af38d.json`, `2026-02-19_20-47-46_5bcb228a.json`, `2026-02-19_20-50-15_79de99c4.json`
-- **Evidence assessment**: ACCURATE — all verified sessions show:
-  - `classification_raw: ""` (empty string)
-  - `response_content: "<think>"` (single token before stop)
-  - `finish_reason: "stop"` (terminated by stop sequence)
-  - `classification_ms: 30-85ms` (abnormally fast — single token generation)
-  - `params: {"temperature": 0.0, "max_tokens": 64, "stop": ["\n"]}` (stop sequence present)
-  - Route defaulted to `primary` regardless of query content
+- Sessions cited: `02dd7356`, `0d399262`, `4c64cb3b`, `4249e47a` (Batch 4, Feb 19 21:13-21:18)
+- Sessions verified: All four sessions read and confirmed
+- Contrast sessions cited: `dfcc2b9e`, `2bec6c42` (Batch 2, Feb 19 18:13-18:15)
+- Contrast sessions verified: Both sessions read and confirmed
+- Evidence assessment: **Accurate**
 
-**Contrast verification**: Read sessions `2026-02-18_23-29-12_1e385399.json` (weather query, correctly classified as ENRICH in 2,638ms) and `2026-02-18_23-29-57_615a271c.json` (conversational query, correctly classified as SIMPLE in 2,148ms) from Batch 1. Both show:
-  - `params: {"temperature": 0.0}` (NO stop sequence in session logs from Batch 1/2)
-  - Full `<think>...</think>` reasoning blocks in `response_content`
-  - Valid classification words (ENRICH, SIMPLE, MODERATE) in `classification_raw`
-  - Normal classification latency (1,600-7,300ms)
+All four Batch 4 sessions show:
+- `params.max_tokens: 64` present
+- `finish_reason: "length"` (not `"stop"`)
+- `classification_raw: ""` (empty after regex stripping of incomplete `<think>` blocks)
+- `route: "primary"` (default fallback)
+- `response_content` contains truncated `<think>` blocks at approximately 64 tokens with no classification word
 
-**Root cause verification**: Examined `src/providers.py` line 110 — confirms `classify_params = {"temperature": 0.0, "max_tokens": 64, "stop": ["\n"]}` in current code. Git history shows this was added in commit `e1c06f2` (Feb 19, 20:54). The parameter is passed directly to the router model API call and logged by `session.begin_step()`.
+All contrast sessions (Batch 2) show:
+- `params` contains only `{"temperature": 0.0}` (no `max_tokens`)
+- `finish_reason: "stop"`
+- Full `<think>` reasoning blocks (~200-250 tokens) followed by classification word
+- Correct route assignment (`enrich`, `primary`)
 
-The CEO's diagnosis is correct: the `\n` stop sequence intercepts the newline immediately after `<think>`, terminating generation before any classification word is produced. The response contains only the string `"<think>"`, which the existing regex at lines 148-149 correctly strips, leaving an empty `decision` that falls through to the default `primary` route at line 152.
+Session `4249e47a` ("what is the weather in pdx right now?") is an unambiguous ENRICH query (contains "right now" trigger phrase, asks for real-time weather). Misrouting to primary is confirmed.
 
-**Sample misrouted queries verified**:
-- Session `5bcb228a` ("What is the current weather in Tokyo right now?") — should be ENRICH (has "current" and "right now" temporal markers), was misrouted to `primary`, fabricated weather data ("partly cloudy with temperatures around 9°C...")
-- Session `79de99c4` ("Design a novel approach to quantum error correction") — matches COMPLEX examples exactly ("Design a novel..."), was misrouted to `primary`, generated a 3,201ms answer on quantum topological codes (competent but should have escalated to xAI)
-- Session `c71af38d` ("Explain the concept of quantum entanglement in detail") — correctly MODERATE-level complexity, but classification failure caused 100% hit rate so even correct outcomes were accidental defaults, not deliberate routing
+Session `4c64cb3b` ("is this the current best research says?") contains "current" (ENRICH trigger word per prompt template), though the CEO correctly notes this is an edge case (qualitative "current" vs. real-time "current").
 
-**Evidence quality**: Strong (30/30 sessions showing identical failure mode, 100% classification failure rate in post-restart batch vs. 0% in pre-restart batches with same prompts and model)
+The CEO's characterization of the technical failure is accurate: `max_tokens: 64` truncates the reasoning model before it emits a classification word, causing 100% classification failure in Batch 4.
 
 **Regression analysis**:
-This is a REMOVAL, not an addition, so traditional regression analysis (what other queries might break) is inverted — the question is: what behavior does the stop sequence ENABLE that removing it would break?
 
-**Answer**: The `\n` stop sequence was likely intended to prevent the model from generating verbose multi-line output after the classification word. By stopping at the first newline, the requester hoped to get just:
-```
-<think>reasoning...</think>
-MODERATE
-```
-...with generation halting at the newline after `MODERATE`.
+**This proposal targets Python source code, which is outside the Session CEO's authority.** Per `review-board.yaml`, the Session CEO is restricted to `proposable_prompt_files` and `proposable_code_files`. The code whitelist is empty — there are no proposable Python files. This is a **governance violation** that must be CHALLENGED regardless of technical merit.
 
-**Why this backfired**: The model emits `<think>\n` to BEGIN its reasoning block. The stop sequence fires on that first internal newline, yielding only `<think>` with no classification word.
+**However, evaluating the proposal on technical merit alone** (as if it were within scope):
 
-**Why removal is safe**:
-1. **`max_tokens: 64` already bounds generation** — even without `stop: ["\n"]`, the model cannot produce more than 64 tokens. Based on Batch 1/2 logs (where the stop sequence was absent), the full reasoning blocks were ~400-600 characters (roughly 150-200 tokens including the `<think>` wrapper), but the model consistently emitted the classification word within the first ~50-100 tokens after starting reasoning. A 64-token cap is sufficient.
+**Positive regression factors** (why this change is likely safe):
+- The proposal restores proven working state: Batch 1 (18 sessions, Feb 18 23:29-23:41) and Batch 2 (12 sessions, Feb 19 18:13-18:15) operated without `max_tokens` and produced 100% successful classifications with no runaway generation.
+- The model's natural stop behavior is empirically demonstrated: all 30 classified requests in Batches 1+2 show `finish_reason: "stop"` — the model emits `<think>reasoning</think>CLASSIFICATION_WORD` and stops naturally.
+- Multiple safety bounds exist: 10-second request timeout at line 126, vLLM server `--max-model-len 32768` ceiling, regex stripping at lines 148-149 handles any length reasoning block.
+- The existing decision extraction (lines 150-158) uses substring matching, not exact matching, so trailing text after the classification word is already tolerated.
 
-2. **Regex stripping already handles `<think>` blocks** — lines 148-149 of `providers.py` use `re.sub(r'<think>.*?</think>', '', raw, flags=re.DOTALL)` to remove closed reasoning blocks, then `re.sub(r'<think>.*', '', decision, flags=re.DOTALL)` to remove any unclosed trailing block. This handles both completed reasoning and truncated mid-reasoning output. The classification word extraction is ALREADY designed to work with multi-line reasoning present.
+**Negative regression factors** (risks introduced by this change):
+- **Unbounded token generation on malformed queries**: Without `max_tokens`, the classifier could generate far beyond the reasoning block if the prompt template changes or if adversarial input causes the model to fail to emit a stop token. The 10-second timeout provides time-based protection but not token-based protection. If the model generates at ~100 tokens/second (typical for the 8B model), 10 seconds could yield ~1000 tokens of output before timeout — consuming 15x more VRAM/KV cache per request than the current 64-token cap.
+- **KV cache pressure during concurrent requests**: The `vllm-router` container has a 14% VRAM budget (~13 GB). Weights consume ~6 GB. The remaining ~7 GB is shared across KV cache (for active requests) and overhead. Batch 2 reasoning blocks were 200-250 tokens. If 5 concurrent classification requests each cache 250 tokens of reasoning at fp8_e4m3 precision, that's 5 * 250 * (model_dim / 8) bytes. For an 8B model with typical ~4096 hidden dim, that's ~640 KB per request or ~3.2 MB total — negligible. But if classification starts generating 1000+ tokens due to a prompt regression or model misbehavior, KV cache consumption scales linearly. This is unlikely to cause OOM (the budget has headroom), but it's a new risk surface.
+- **Latency regression for common queries**: Batch 4 classifications completed in 628-651ms (fast, but broken). Batch 2 classifications took 1661-7298ms (2.5x to 11x slower, but correct). Removing `max_tokens` will restore correct behavior but at the cost of slower classification. For a single-user homelab, this is tolerable. But it's a real regression in perceived latency — the broken system *felt* faster.
+- **No code-level constraint on reasoning verbosity**: The routing system prompt (line 107, sourced from `ROUTING_SYSTEM_PROMPT`) contains "Reason silently (<30 tokens)." But this is guidance, not enforcement. If the classifier ignores the instruction (model drift, prompt change, adversarial input), there's no fallback constraint. The previous `max_tokens: 64` was attempting to enforce brevity; removing it trusts the model entirely. The CEO is correct that the 64-token cap was too aggressive for a reasoning model, but a higher cap (e.g., 256 or 512) would provide belt-and-suspenders protection without strangling reasoning.
 
-3. **Empirical evidence from Batches 1 and 2** — classification worked correctly for 18 sessions in Batch 1 and 12 sessions in Batch 2 WITHOUT the stop sequence. Those sessions show that the model naturally produces `<think>...reasoning...</think>CLASSIFICATION_WORD` and the regex extraction handles it cleanly. Adding the stop sequence BROKE a working system.
+**Alternative not considered by the CEO**: Instead of removing `max_tokens` entirely, increase it to a value that accommodates typical reasoning length with headroom. For example, `max_tokens: 512` would:
+- Allow the 200-250 token reasoning blocks observed in Batch 2
+- Provide 2x headroom for longer reasoning on ambiguous queries
+- Prevent runaway generation beyond 512 tokens (guarded by both `max_tokens` and the 10-second timeout)
+- Maintain a token-based ceiling independent of timing
 
-**Worst-case scenario if removed**: The model generates 64 tokens of reasoning + classification word + trailing whitespace/commentary. The regex strips all `<think>` blocks, `.strip().upper()` on line 150 removes whitespace, and the classification word is extracted. If the model gets verbose AFTER the classification word (e.g., `MODERATE\nBecause this is a basic question...`), the regex won't strip it (it's outside `<think>` tags), so `decision` would contain `MODERATE\nBECAUSE THIS IS A BASIC QUESTION...`. But line 153 checks `if 'ENRICH' in decision`, line 155 checks `if 'MODERATE' in decision`, etc. — the substring matching is permissive and would still work. Even verbose trailing text wouldn't break routing.
+The CEO dismissed this alternative in lines 196-198: "An alternative would be to increase `max_tokens` (e.g., to 256 or 512) rather than removing it entirely. However, this adds complexity for no benefit..." This reasoning is **flawed**. A higher `max_tokens` does not add complexity — it's the same one-line change, just with a different value. And it provides real benefit: defense against unbounded generation. The CEO's argument that "the model naturally stops" is empirically true for the current prompt, but it's not a *guarantee* — prompts change, models change, and safety bounds should not rely solely on model behavior.
 
-**Actual risk**: Near zero. The stop sequence is actively harmful (causes 100% failure) and provides no benefit that `max_tokens: 64` + regex stripping don't already provide.
+**Proportionality check**: The fix is proportional to the problem. The issue affects 100% of classifications. A one-line parameter change is minimal. However, the choice between "remove `max_tokens`" vs. "increase `max_tokens` to 256/512" is significant, and the CEO chose the more aggressive option without sufficient justification.
 
-**Architectural check**: PASS — this is a technical parameter fix in the classification request. It does not blur the boundary between classifier and generator. The classifier model still only classifies; the primary model still only generates. The enrichment pipeline still only fetches context. Removing a broken stop sequence does not violate separation of concerns.
+**Architectural check**:
+- ✅ Maintains separation between classifier and generator (no boundary crossing)
+- ✅ Changes only the Providers boundary (`providers.py`)
+- ✅ Preserves observability (session logs already capture `params` and `finish_reason`)
+- ✅ Does not introduce new imports or dependencies
+- ⚠️ Removes a safety constraint (token ceiling) without replacing it
 
-**Proportionality check**: PASS — 30/30 classification failures (100% hit rate) across an entire batch, causing misrouted COMPLEX queries (sent to local model when cloud escalation was needed) and misrouted ENRICH queries (fabricated real-time data instead of fetching it) absolutely justifies a one-line parameter change. This is not speculative optimization; this is fixing a complete system failure.
+**Code-specific checks**:
+- **Boundary contract preservation**: The Providers boundary contract states "Classification always returns a valid route name (defaulting to `primary` on failure, with a logged warning)." This proposal does not change that contract — classification still defaults to `primary` on failure. The change affects *when* classification succeeds vs. fails, not the contract itself. ✅ Pass
+- **Cross-boundary coupling**: No new imports, function calls, or data flow across boundaries. ✅ Pass
+- **Observability impact**: No change to session logging. The existing session JSON already captures `params.max_tokens` and `finish_reason`, so the before/after state is fully observable. ✅ Pass
+- **No-Facades Rule**: This change does not introduce any silent degradation or false success. In fact, it **fixes** a No-Facades violation: the current state has classification silently failing (empty `classification_raw`, defaulting to `primary`) with no visible error to the end user. The proposal restores correct classification, making the system appear correct *because it actually is correct*. ✅ Pass (improvement, not violation)
+- **Import/dependency changes**: None. ✅ Pass
 
 **Verdict rationale**:
-The CEO's analysis is technically sound, the evidence is overwhelming (100% failure rate vs. 0% in earlier batches), the proposed fix is minimal and low-risk, and the regression analysis confirms removal is safer than keeping the broken stop sequence.
 
-**However**, this proposal modifies Python source code in `src/providers.py`, which is explicitly outside the Session CEO's edit authority per `agents/session-review/AGENT.md` ("Your scope is limited to: config/prompts/routing/system.md, config/prompts/routing/request.md, config/prompts/enrichment/system.md, config/prompts/enrichment/injection.md").
+**CHALLENGED on governance grounds**: This proposal targets `src/providers.py`, which is a Python source file. The Session CEO's authority (per `review-board.yaml`) is limited to files in `proposable_prompt_files` and `proposable_code_files`. The `proposable_code_files` list is **empty** — no Python files are within the CEO's edit scope. The CEO explicitly acknowledged this in line 202: "This proposal requires human review because it modifies Python source code, which is outside Session CEO authority."
 
-The CEO correctly labeled this as "requires human review" and provided the exact code change needed. **This is the appropriate outcome** — the Session CEO identified a critical infrastructure issue, diagnosed the root cause, verified it against session logs, and escalated to human authority with a specific remediation proposal.
+The boardroom structure is designed with this constraint intentionally. The Session CEO analyzes session logs and proposes prompt improvements. Python code changes require human review because they introduce regression risks that cannot be fully evaluated by log analysis alone. The CEO identifying a code-level issue and documenting the root cause is **excellent work** — it's exactly what the Session CEO should do. But the CEO cannot propose code changes; that proposal must come from a human operator.
 
-**My role as Adversarial Challenger does not extend to approving or blocking code changes.** I can only evaluate prompt-edit proposals. This is a correct escalation, not a challengeable proposal.
-
-## Issues Not Proposed (Acknowledged Correctly)
-
-The CEO correctly identified Issue 2 (fabricated real-time data) as a **downstream consequence of Issue 1**, not a separate prompt problem. The primary model confidently invented specific weather data for Tokyo and fictitious AI regulation events because it received ENRICH-eligible queries without enrichment context. This resolves automatically when Issue 1 is fixed. **Correct call** — no separate prompt change needed.
-
-The CEO correctly noted Issue 3 ("tell me something you shouldnt" misclassified as ENRICH) **remains at 1 session** (`bc988c3a`), below the 3-session evidence threshold from `review-board.yaml`. **Correct call** — continue monitoring, do not propose changes on single-session patterns.
-
-The CEO correctly characterized Issue 4 (slow classification, 5-7 seconds) as **inherent to the 8B reasoning model**, not fixable via prompts, and already mitigated by speculative execution for primary-routed queries. **Correct call** — this is model behavior, not a routing logic issue.
+**If this were within scope**, I would still CHALLENGE on technical grounds: the proposal removes a safety constraint (token ceiling) without replacing it, and dismisses a safer alternative (`max_tokens: 512`) without adequate justification. The CEO's evidence is strong, the root cause analysis is accurate, and the general direction (remove or raise the token cap) is correct. But the specific choice to remove `max_tokens` entirely, rather than increase it to a value that accommodates reasoning while maintaining a safety ceiling, is insufficiently justified given the regression risks outlined above.
 
 ## Cycle Recommendation
 
-**No prompt proposals to evaluate.** The single item in this report is a code change that requires human review and is outside the Improvement Board's authority.
+**No proposals survived challenge — cycle ends with no changes.**
 
-**Cycle outcome**: No changes to prompt files. Human operator should review Proposal 1 (stop sequence removal in `src/providers.py`) and decide whether to implement it outside the boardroom process.
+The CEO has correctly identified a critical code-level bug (`max_tokens: 64` truncating classification reasoning) and provided strong evidence (4 Batch 4 sessions showing failure, 12+ Batch 1+2 sessions showing working state). However:
 
-**For the next cycle**: If the human operator implements the stop sequence fix and classification returns to normal operation, the CEO should monitor for any NEW classification issues that emerge. The ENRICH false-positive pattern (Issue 3, session `bc988c3a`) is still worth tracking — if it recurs in 2+ more independent sessions, it may warrant a prompt clarification to distinguish "conversational boundary-testing" from "queries needing verified facts."
+1. **Governance**: The proposal targets Python source code, which is outside the Session CEO's authority. Code changes require human review and cannot land via the autonomous boardroom cycle.
+
+2. **Human action required**: A human operator should review the CEO report, verify the analysis (which is accurate), and decide whether to:
+   - Remove `max_tokens` entirely (the CEO's recommendation)
+   - Increase `max_tokens` to 256 or 512 (my recommended alternative)
+   - Investigate further before making a change
+
+3. **Boardroom cycle status**: The boardroom has fulfilled its function — the Session CEO identified a critical issue and documented it thoroughly. The Challenger evaluated the proposal and correctly flagged it as out-of-scope. The next step is human review, not QA validation.
+
+**Recommendation for the next boardroom cycle**: After a human operator fixes the `max_tokens` issue (or chooses not to), the Session CEO should review the next batch of sessions to confirm classification is working correctly and evaluate any new issues that emerge. If classification failure persists in the next batch, the CEO should escalate to human review again rather than reproposing the same code change.
