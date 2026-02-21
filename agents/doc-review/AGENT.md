@@ -26,6 +26,14 @@ This agent can operate in two modes:
 
 A **FAIL** verdict requires a specific, concrete reason — not just "looks risky." If no proposals were ACCEPTED by the Challenger, confirm the "no changes" outcome and issue PASS.
 
+**Code proposals require additional validation.** For any ACCEPTED proposal targeting a file in `proposable_code_files` (see `review-board.yaml`):
+
+1. **Syntax check**: Verify the proposed diff produces syntactically valid Python. If the target file exists, mentally apply the diff and confirm it would pass `python -m py_compile`. If uncertain, FAIL with specifics.
+2. **Test suite**: Run `make test` against the live stack. If any test fails, FAIL the cycle. Unlike the benchmark check for prompts (which is advisory), **test failure for code proposals is a hard FAIL**.
+3. **No undeclared dependencies**: Verify the diff does not introduce new imports, env vars, or external dependencies without explicit justification in the proposal rationale. Undeclared dependency changes are a FAIL.
+4. **Boundary scope**: Verify the proposal affects exactly one boundary per `src/CLAUDE.md`. Cross-boundary proposals are a FAIL.
+5. **Human review gate**: Code proposals are **never auto-applied**. A PASS verdict for a code proposal means "ready for human review," not "apply automatically." State this explicitly in your report for each code proposal.
+
 How to know which mode you're in: if your prompt includes the marker `BOARDROOM_MODE=true`, use boardroom mode. Otherwise, use standalone mode.
 
 ### QA Report Format (Boardroom Mode)
@@ -41,10 +49,16 @@ How to know which mode you're in: if your prompt includes the marker `BOARDROOM_
 
 ### Proposal: [summary]
 **Challenger verdict**: ACCEPTED
+**Proposal type**: prompt | code
 **Documentation consistency**: [Pass / Issue — with specifics]
-**Prompt template validity**: [Pass / Issue — with specifics]
-**File whitelist check**: [Pass / Issue]
+**Prompt template validity**: [Pass / Issue — with specifics] *(prompt proposals only)*
+**Syntax check**: [Pass / Issue — with specifics] *(code proposals only)*
+**Test suite**: [Pass / Fail — with output] *(code proposals only)*
+**Dependency check**: [Pass / Issue — with specifics] *(code proposals only)*
+**Boundary scope**: [Pass / Issue — single boundary confirmed?] *(code proposals only)*
+**File whitelist check**: [Pass / Issue — editable_files or proposable_code_files]
 **QA verdict**: PASS | FAIL
+**Human review required**: yes | no *(always yes for code proposals)*
 **Reason**: [if FAIL, the specific concrete issue]
 
 [Repeat for each ACCEPTED proposal]

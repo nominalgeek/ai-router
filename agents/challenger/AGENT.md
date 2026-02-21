@@ -24,8 +24,7 @@ This is a homelab AI router that classifies incoming requests and routes them to
 
 | Route | Classification | Backend | When |
 |-------|---------------|---------|------|
-| `primary` | SIMPLE | Nano 30B (local) | Greetings, trivial questions |
-| `primary` | MODERATE | Nano 30B (local) | Coding, analysis, explanations |
+| `primary` | MODERATE | Nano 30B (local) | Greetings, chat, coding, analysis, explanations |
 | `xai` | COMPLEX | Grok (xAI API) | Research-level, novel problems |
 | `enrich` | ENRICH | Grok → Nano 30B | Queries needing real-time/web data |
 | `meta` | META (heuristic) | Nano 30B (local) | Client-generated meta-prompts |
@@ -51,7 +50,7 @@ If the report lacks structured proposals (just a narrative report with no action
 For each proposal, read the cited session log files from `logs/sessions/` yourself. Do NOT take the CEO's characterization at face value. Check:
 
 - **Do the sessions exist?** The CEO must cite real session IDs that correspond to actual files.
-- **Is the characterization accurate?** If the CEO says session `abc123` was a misclassified SIMPLE query, read the session and confirm the `user_query`, `classification_raw`, and `route` fields match that claim.
+- **Is the characterization accurate?** If the CEO says session `abc123` was a misclassified MODERATE query, read the session and confirm the `user_query`, `classification_raw`, and `route` fields match that claim.
 - **Is the sample representative?** 3 sessions showing the same pattern is the minimum. But if those 3 are from the same conversation or the same narrow query type, the pattern may not generalize.
 
 ### Step 3: Evaluate Each Proposal
@@ -67,17 +66,27 @@ For each proposal, assess these dimensions:
 #### Regression risk
 - **This is the most important check.** Will the proposed prompt edit cause *other* query types to be misrouted?
 - Read the target prompt file (`config/prompts/routing/system.md` or `request.md`) and mentally apply the proposed edit. Think about what other queries might now match differently.
-- Example: Adding "recipes" to the SIMPLE examples could cause "write me a Python recipe for web scraping" to be under-escalated.
+- Example: Adding "recipes" to the MODERATE examples could cause "write me a Python recipe for web scraping" to be under-escalated.
 - Example: Tightening the COMPLEX criteria could cause legitimate research questions to stay local.
 
 #### Architectural respect
 - Does the proposal maintain the separation between classifier and generator?
-- Does it stay within the editable file whitelist? (Only `config/prompts/routing/system.md`, `config/prompts/routing/request.md`, `config/prompts/enrichment/system.md`, `config/prompts/enrichment/injection.md`)
-- Does it avoid scope creep into unrelated prompt files or Python code?
+- Does it stay within the file whitelists defined in `review-board.yaml`? Prompt edits must target files in `editable_files`. Code diffs must target files in `proposable_code_files`.
+- Does it avoid scope creep into unrelated files?
 
 #### Proportionality
 - Is the fix proportional to the problem? A single misclassification doesn't justify rewriting the routing prompt.
 - Is the edit additive (adding an example or clarification) rather than destructive (removing or restructuring)?
+
+#### Code-specific checks (for proposals targeting `proposable_code_files`)
+
+If the proposal targets a `src/*.py` file, apply these additional checks on top of the standard dimensions above:
+
+- **Boundary contract preservation**: Read `src/CLAUDE.md` and verify the diff maintains the contract for the affected boundary (Configuration, Providers, Routing, or Logging). The proposal must affect exactly one boundary — if it crosses boundaries, CHALLENGE it.
+- **Cross-boundary coupling**: Does the diff introduce imports, function calls, or data flow that crosses the four boundaries defined in `src/CLAUDE.md`? New coupling between boundaries is a CHALLENGE signal.
+- **Observability impact**: Does the diff maintain or improve logging and session-log coverage? A change that removes or weakens observability (fewer log lines, missing session fields, swallowed errors) without justification should be CHALLENGED.
+- **No-Facades Rule**: Per `AI_OPERATOR_PROFILE.md` §3, does the diff introduce any behavior that could make the system appear correct when it isn't? Silent fallbacks, stubbed success paths, or catch-all exception swallowing are CHALLENGE signals.
+- **Import/dependency changes**: If the diff adds new imports or dependencies, verify the proposal includes explicit justification. Unjustified dependency changes are a CHALLENGE signal.
 
 ### Step 4: Assign Verdicts
 

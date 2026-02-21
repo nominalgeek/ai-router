@@ -9,7 +9,7 @@ See `vram-requirements.md` for the math behind memory allocation decisions.
 ```
 --model cyankiwi/Nemotron-Orchestrator-8B-AWQ-4bit
 ```
-Which model to load. This is an AWQ 4-bit quantized version of Nemotron Orchestrator 8B, purpose-built for query classification. It only emits routing labels (SIMPLE, MODERATE, COMPLEX, ENRICH) — it never generates user-facing responses.
+Which model to load. This is an AWQ 4-bit quantized version of Nemotron Orchestrator 8B, purpose-built for query classification. It only emits routing labels (MODERATE, COMPLEX, ENRICH) — it never generates user-facing responses.
 
 ```
 --dtype half

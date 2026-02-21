@@ -5,7 +5,7 @@ set -e
 
 echo "==================================="
 echo "AI Router Test Suite"
-echo "Five-Route Routing Pipeline"
+echo "Four-Route Routing Pipeline"
 echo "==================================="
 echo ""
 
@@ -23,21 +23,35 @@ WARN=0
 # Base URL
 BASE_URL="http://localhost"
 
+# Load API key from .secrets if available (needed for authenticated endpoints).
+# Format in .secrets is KEY=value, one per line.
+API_KEY=""
+if [ -f .secrets ]; then
+    API_KEY=$(grep '^API_KEY=' .secrets | cut -d'=' -f2-)
+fi
+
+# Build auth header array — empty if no key configured.
+AUTH_HEADER=()
+if [ -n "$API_KEY" ]; then
+    AUTH_HEADER=(-H "Authorization: Bearer $API_KEY")
+fi
+
 # Test function
 test_endpoint() {
     local name="$1"
     local url="$2"
     local method="${3:-GET}"
     local data="$4"
-    
+
     echo -n "Testing $name... "
-    
+
     if [ "$method" == "POST" ]; then
         response=$(curl -s -w "\n%{http_code}" -X POST "$url" \
             -H "Content-Type: application/json" \
+            "${AUTH_HEADER[@]}" \
             -d "$data" 2>/dev/null || echo "000")
     else
-        response=$(curl -s -w "\n%{http_code}" "$url" 2>/dev/null || echo "000")
+        response=$(curl -s -w "\n%{http_code}" "${AUTH_HEADER[@]}" "$url" 2>/dev/null || echo "000")
     fi
     
     http_code=$(echo "$response" | tail -n1)
@@ -91,12 +105,32 @@ fi
 echo ""
 
 # Test health endpoints
+# The vLLM containers are network-isolated (ai-internal, no Traefik access).
+# The ai-router's /health endpoint checks them internally and reports per-backend status.
 echo "3. Testing health endpoints..."
 echo ""
 
 test_endpoint "AI Router Health" "$BASE_URL/health"
-test_endpoint "Router Model Health" "$BASE_URL/router/health"
-test_endpoint "Primary Model Health" "$BASE_URL/primary/health"
+
+echo -n "Testing Router Model Health (via ai-router)... "
+router_status=$(curl -s "$BASE_URL/health" | jq -r '.router_model // "unknown"')
+if [ "$router_status" == "healthy" ]; then
+    echo -e "${GREEN}✓ PASS${NC} ($router_status)"
+    PASS=$((PASS + 1))
+else
+    echo -e "${RED}✗ FAIL${NC} ($router_status)"
+    FAIL=$((FAIL + 1))
+fi
+
+echo -n "Testing Primary Model Health (via ai-router)... "
+primary_status=$(curl -s "$BASE_URL/health" | jq -r '.primary_model // "unknown"')
+if [ "$primary_status" == "healthy" ]; then
+    echo -e "${GREEN}✓ PASS${NC} ($primary_status)"
+    PASS=$((PASS + 1))
+else
+    echo -e "${RED}✗ FAIL${NC} ($primary_status)"
+    FAIL=$((FAIL + 1))
+fi
 
 echo ""
 
@@ -105,8 +139,6 @@ echo "4. Testing model endpoints..."
 echo ""
 
 test_endpoint "List All Models" "$BASE_URL/v1/models"
-test_endpoint "Router Models" "$BASE_URL/router/v1/models"
-test_endpoint "Primary Models" "$BASE_URL/primary/v1/models"
 
 echo ""
 
@@ -123,6 +155,7 @@ simple_data='{
 echo "Sending simple query: 'Hello'"
 response=$(curl -s -X POST "$BASE_URL/v1/chat/completions" \
     -H "Content-Type: application/json" \
+    "${AUTH_HEADER[@]}" \
     -d "$simple_data")
 
 # Check for either content or reasoning_content (for reasoning models)
@@ -134,7 +167,7 @@ if [ -n "$content" ] && [ "$content" != "null" ]; then
     PASS=$((PASS + 1))
     echo "Response: $(echo "$content" | head -c 100)..."
 
-    # Verify routing to primary model (SIMPLE now routes to Nano 30B)
+    # Verify routing to primary model (MODERATE routes to Nano 30B)
     if [[ "$model" == *"Nemotron-3-Nano-30B"* ]]; then
         echo -e "${GREEN}✓ Correctly routed to primary model (Nano 30B)${NC}"
         PASS=$((PASS + 1))
@@ -163,6 +196,7 @@ complex_data='{
 echo "Sending moderate query: 'Explain quantum entanglement...'"
 response=$(curl -s -X POST "$BASE_URL/v1/chat/completions" \
     -H "Content-Type: application/json" \
+    "${AUTH_HEADER[@]}" \
     -d "$complex_data")
 
 # Check for either content or reasoning_content (for reasoning models)
@@ -203,6 +237,7 @@ highly_complex_data='{
 echo "Sending highly complex query: 'Design quantum-resistant crypto...'"
 response=$(curl -s -X POST "$BASE_URL/v1/chat/completions" \
     -H "Content-Type: application/json" \
+    "${AUTH_HEADER[@]}" \
     -d "$highly_complex_data")
 
 # Check for either content or reasoning_content (for reasoning models)
@@ -243,6 +278,7 @@ enrich_data='{
 echo "Sending enrichment query: 'What is the current weather in Tokyo right now?'"
 response=$(curl -s -X POST "$BASE_URL/v1/chat/completions" \
     -H "Content-Type: application/json" \
+    "${AUTH_HEADER[@]}" \
     -d "$enrich_data")
 
 # Check for either content or reasoning_content (for reasoning models)
@@ -285,6 +321,7 @@ meta_data='{
 echo "Sending meta-prompt (embedded chat history with task markers)..."
 response=$(curl -s -X POST "$BASE_URL/v1/chat/completions" \
     -H "Content-Type: application/json" \
+    "${AUTH_HEADER[@]}" \
     -d "$meta_data")
 
 content=$(echo "$response" | jq -r '.choices[0].message.content // .choices[0].message.reasoning_content // empty')
@@ -312,7 +349,7 @@ fi
 echo ""
 
 # Test lengthy MODERATE queries (validates --max-model-len on router isn't too tight)
-echo "10. Testing lengthy moderate query (code review)..."
+echo "10. Testing lengthy MODERATE query (code review)..."
 echo ""
 
 # ~1500 chars of code — should classify as MODERATE and route to primary.
@@ -327,6 +364,7 @@ lengthy_code_data='{
 echo "Sending lengthy code review (~1500 chars of Python code)..."
 response=$(curl -s -X POST "$BASE_URL/v1/chat/completions" \
     -H "Content-Type: application/json" \
+    "${AUTH_HEADER[@]}" \
     -d "$lengthy_code_data")
 
 content=$(echo "$response" | jq -r '.choices[0].message.content // .choices[0].message.reasoning_content // empty')
@@ -362,8 +400,8 @@ fi
 
 echo ""
 
-# Test lengthy SIMPLE query — a verbose but fundamentally basic question
-echo "11. Testing lengthy simple query (verbose but basic)..."
+# Test lengthy MODERATE query — a verbose but fundamentally basic question
+echo "11. Testing lengthy basic query (verbose but basic)..."
 echo ""
 
 lengthy_simple_data='{
@@ -372,9 +410,10 @@ lengthy_simple_data='{
   "temperature": 0.7
 }'
 
-echo "Sending lengthy but basic query (~700 chars, asks a simple question)..."
+echo "Sending lengthy but basic query (~700 chars, asks a basic question)..."
 response=$(curl -s -X POST "$BASE_URL/v1/chat/completions" \
     -H "Content-Type: application/json" \
+    "${AUTH_HEADER[@]}" \
     -d "$lengthy_simple_data")
 
 content=$(echo "$response" | jq -r '.choices[0].message.content // .choices[0].message.reasoning_content // empty')
@@ -382,12 +421,12 @@ model=$(echo "$response" | jq -r '.model // empty')
 error_msg=$(echo "$response" | jq -r '.error.message // empty')
 
 if [ -n "$error_msg" ] && [ "$error_msg" != "null" ]; then
-    echo -e "${RED}✗ Lengthy simple query FAILED (classification error)${NC}"
+    echo -e "${RED}✗ Lengthy basic query FAILED (classification error)${NC}"
     echo "Error: $error_msg"
     echo "This may indicate --max-model-len on the router is too small."
     FAIL=$((FAIL + 1))
 elif [ -n "$content" ] && [ "$content" != "null" ]; then
-    echo -e "${GREEN}✓ Lengthy simple query successful${NC}"
+    echo -e "${GREEN}✓ Lengthy basic query successful${NC}"
     PASS=$((PASS + 1))
     echo "Response: $(echo "$content" | head -c 100)..."
 
@@ -395,66 +434,14 @@ elif [ -n "$content" ] && [ "$content" != "null" ]; then
         echo -e "${GREEN}✓ Correctly routed to primary model (not escalated to xAI)${NC}"
         PASS=$((PASS + 1))
     elif [[ "$model" == *"grok"* ]]; then
-        echo -e "${YELLOW}⚠ Routed to xAI — misclassified as COMPLEX (expected SIMPLE/MODERATE)${NC}"
+        echo -e "${YELLOW}⚠ Routed to xAI — misclassified as COMPLEX (expected MODERATE)${NC}"
         WARN=$((WARN + 1))
     else
         echo -e "${YELLOW}⚠ Routed to: $model (expected Nano 30B)${NC}"
         WARN=$((WARN + 1))
     fi
 else
-    echo -e "${RED}✗ Lengthy simple query failed${NC}"
-    FAIL=$((FAIL + 1))
-    echo "Response: $response"
-fi
-
-echo ""
-
-# Test direct router access
-echo "12. Testing direct model access..."
-echo ""
-
-router_data='{
-  "model": "cyankiwi/Nemotron-Orchestrator-8B-AWQ-4bit",
-  "messages": [{"role": "user", "content": "Hi there"}],
-  "max_tokens": 30
-}'
-
-echo "Testing direct router model access..."
-response=$(curl -s -X POST "$BASE_URL/router/v1/chat/completions" \
-    -H "Content-Type: application/json" \
-    -d "$router_data")
-
-# Check for either content or reasoning_content (for reasoning models)
-content=$(echo "$response" | jq -r '.choices[0].message.content // .choices[0].message.reasoning_content // empty' 2>/dev/null)
-if [ -n "$content" ] && [ "$content" != "null" ]; then
-    echo -e "${GREEN}✓ Direct router access successful${NC}"
-    PASS=$((PASS + 1))
-else
-    echo -e "${RED}✗ Direct router access failed${NC}"
-    FAIL=$((FAIL + 1))
-    echo "Response: $response"
-fi
-
-echo ""
-
-primary_data='{
-  "model": "unsloth/NVIDIA-Nemotron-3-Nano-30B-A3B-NVFP4",
-  "messages": [{"role": "user", "content": "Quick test"}],
-  "max_tokens": 30
-}'
-
-echo "Testing direct primary model access..."
-response=$(curl -s -X POST "$BASE_URL/primary/v1/chat/completions" \
-    -H "Content-Type: application/json" \
-    -d "$primary_data")
-
-# Check for either content or reasoning_content (for reasoning models)
-content=$(echo "$response" | jq -r '.choices[0].message.content // .choices[0].message.reasoning_content // empty' 2>/dev/null)
-if [ -n "$content" ] && [ "$content" != "null" ]; then
-    echo -e "${GREEN}✓ Direct primary access successful${NC}"
-    PASS=$((PASS + 1))
-else
-    echo -e "${RED}✗ Direct primary access failed${NC}"
+    echo -e "${RED}✗ Lengthy basic query failed${NC}"
     FAIL=$((FAIL + 1))
     echo "Response: $response"
 fi
@@ -462,7 +449,7 @@ fi
 echo ""
 
 # Test additional endpoints
-echo "13. Testing additional endpoints..."
+echo "12. Testing additional endpoints..."
 echo ""
 
 test_endpoint "Root Endpoint" "$BASE_URL/"
@@ -472,7 +459,7 @@ test_endpoint "Explicit Route API" "$BASE_URL/api/route" "POST" '{"route": "prim
 echo ""
 
 # Test Traefik dashboard
-echo "14. Testing Traefik dashboard..."
+echo "13. Testing Traefik dashboard..."
 echo ""
 
 if curl -s "http://localhost:8080/api/overview" | jq . > /dev/null 2>&1; then
@@ -504,7 +491,6 @@ fi
 
 echo ""
 echo "Routing categories tested:"
-echo "  • SIMPLE   → Nano 30B (primary model)"
 echo "  • MODERATE → Nano 30B (primary model)"
 echo "  • COMPLEX  → xAI Grok (external API)"
 echo "  • ENRICH   → xAI context → Nano 30B (enrichment pipeline)"

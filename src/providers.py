@@ -100,14 +100,14 @@ def determine_route(messages: list, session: SessionLogger = None, date_ctx: str
 
     # Build routing classification prompt from external template
     routing_prompt = context_prefix + ROUTING_PROMPT.format(
-        query=last_message, truncation_note=""
+        query=last_message
     )
 
     classify_messages = [
         {"role": "system", "content": f"{date_ctx or date_context()}\n\n{ROUTING_SYSTEM_PROMPT}"},
         {"role": "user", "content": routing_prompt}
     ]
-    classify_params = {"temperature": 0.0}
+    classify_params = {"temperature": 0.0, "max_tokens": 1024}
     classify_url = f"{ROUTER_URL}/v1/chat/completions"
 
     if session:
@@ -152,13 +152,13 @@ def determine_route(messages: list, session: SessionLogger = None, date_ctx: str
         route = 'primary'  # default
         if 'ENRICH' in decision:
             route = 'enrich'
-        elif 'SIMPLE' in decision:
-            route = 'primary'
         elif 'MODERATE' in decision:
             route = 'primary'
         elif 'COMPLEX' in decision:
             route = 'xai'
         else:
+            # Catch-all: unrecognized classification (including stale "SIMPLE"
+            # from cached responses) defaults to primary with a warning.
             logger.warning(f"Routing classification unclear: '{decision}', defaulting to primary")
 
         logger.info(f"Classification completed: {decision} -> {route} in {classify_ms:.0f}ms (finish_reason={finish_reason})")
@@ -205,6 +205,9 @@ def start_speculative_primary(data: dict, date_ctx: str, is_stream: bool):
         spec_data.pop('max_tokens', None)
         spec_data.pop('_route', None)
         spec_data['model'] = PRIMARY_MODEL
+        # Recommended sampling settings for Nemotron Nano reasoning tasks
+        spec_data['temperature'] = 1.0
+        spec_data['top_p'] = 1.0
 
         # Inject temporal context + primary system prompt (mirrors forward_request)
         context_line = f"{date_ctx}\n{PRIMARY_SYSTEM_PROMPT}"
@@ -364,6 +367,9 @@ def forward_request(target_url: str, path: str, data: Dict[Any, Any], route: str
             data['model'] = XAI_MODEL
         else:
             data['model'] = PRIMARY_MODEL
+            # Recommended sampling settings for Nemotron Nano reasoning tasks
+            data['temperature'] = 1.0
+            data['top_p'] = 1.0
 
         is_stream = data.get('stream', False)
 

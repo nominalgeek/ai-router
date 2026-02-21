@@ -14,8 +14,8 @@ Measured end-to-end from client `curl` to response received. Classification, enr
 
 | Route | Classification | Enrichment | Inference | Total | Classification % |
 |-------|---------------|------------|-----------|-------|-----------------|
-| SIMPLE | 952–1,087ms | — | 208–396ms | 1,181–1,426ms | **67–81%** |
-| MODERATE | 1,394–1,806ms | — | 402–2,204ms | 1,803–3,873ms | **43–77%** |
+| MODERATE (short) | 952–1,087ms | — | 208–396ms | 1,181–1,426ms | **67–81%** |
+| MODERATE (long) | 1,394–1,806ms | — | 402–2,204ms | 1,803–3,873ms | **43–77%** |
 | COMPLEX | 1,434–1,477ms | — | 7,347–11,007ms | 8,825–12,442ms | 12–17% |
 | ENRICH | 855–1,426ms | 11,127–25,987ms | 1,415–3,498ms | 13,845–30,913ms | 3–6% |
 | META | 0ms (skipped) | — | 1,006–1,250ms | 1,007–1,250ms | 0% |
@@ -82,9 +82,9 @@ Cleanup time will increase as session files approach the 5,000 max. Currently ne
 
 ### 1. Classification dominates primary routes
 
-The Orchestrator 8B takes 950–1,800ms to reason through its `<think>` block before emitting a one-word classification. For SIMPLE queries (inference ~200–400ms), classification is **3–4× longer** than the actual response. For MODERATE queries, classification is 43–77% of total time depending on response length.
+The Orchestrator 8B takes 950–1,800ms to reason through its `<think>` block before emitting a one-word classification. For short MODERATE queries (inference ~200–400ms), classification is **3–4× longer** than the actual response. For longer MODERATE queries, classification is 43–77% of total time depending on response length.
 
-~80% of real-world requests route to primary (SIMPLE or MODERATE). Every one of them pays the full classification tax before inference can start. This applies equally to streaming — the user sees no tokens until classification completes, adding ~1s to perceived TTFT.
+~80% of real-world requests route to primary (MODERATE). Every one of them pays the full classification tax before inference can start. This applies equally to streaming — the user sees no tokens until classification completes, adding ~1s to perceived TTFT.
 
 ### 2. Enrichment step dominates the ENRICH route (with high variance)
 
@@ -137,7 +137,7 @@ Added structured timing logs at every stage of the pipeline. These run at every 
 
 ```
 Incoming request: messages=1 total_chars=5 stream=False
-Classification completed: SIMPLE -> primary in 973ms (finish_reason=stop)
+Classification completed: MODERATE -> primary in 973ms (finish_reason=stop)
 Provider response: primary status=200 duration_ms=208 finish_reason=stop stream=false
 REQUEST session=dba46d38 route=primary classification_ms=973 inference_ms=208 total_ms=1181 stream=False
 Session saved: dba46d38 write_ms=0 cleanup_ms=0
@@ -147,7 +147,7 @@ Session saved: dba46d38 write_ms=0 cleanup_ms=0
 
 ```
 Incoming request: messages=1 total_chars=9 stream=True
-Classification completed: SIMPLE -> primary in 1014ms (finish_reason=stop)
+Classification completed: MODERATE -> primary in 1014ms (finish_reason=stop)
 REQUEST session=ed341480 route=primary classification_ms=1014 inference_ms=17 total_ms=1032 stream=True
 Provider response: primary status=200 connect_ms=17 ttft_ms=48 stream=true
 Session saved: ed341480 write_ms=0 cleanup_ms=0
@@ -175,7 +175,7 @@ Session saved: 80c4e473 write_ms=0 cleanup_ms=0
 **Problem:** All non-meta requests block on classification (~1.0–1.8s) before inference starts. For the ~80% of requests that route to primary, this is pure overhead. For streaming, this means ~1s of dead time before any tokens reach the user.
 
 **Solution:** Fire the primary model request in parallel with classification. When classification returns:
-- **SIMPLE/MODERATE (most common):** The primary response is already in flight. TTFT drops by ~1.0–1.8s.
+- **MODERATE (most common):** The primary response is already in flight. TTFT drops by ~1.0–1.8s.
 - **COMPLEX:** Cancel the speculative primary request, forward to xAI. Cost: one wasted local inference start (~200–400ms GPU time), no user-visible penalty since xAI starts immediately after classification.
 - **ENRICH:** Cancel speculative request, run enrichment pipeline. Same trade-off.
 
@@ -313,7 +313,7 @@ route = determine_route(data['messages'], session=session, date_ctx=date_ctx)
 
 ### Verification
 
-1. **`make test`** — 26/26 passed. All routes (SIMPLE, MODERATE, COMPLEX, ENRICH, META) work correctly.
+1. **`make test`** — 26/26 passed. All routes (MODERATE, COMPLEX, ENRICH, META) work correctly.
 2. **`make benchmark`** — Benchmark 3 (long context) now passes. All other benchmarks unchanged.
 3. **Session logs** — Speculative execution produces correct session JSONs with classification + provider_call steps.
 4. **Speculative execution** — Primary routes log `speculative=true`. Non-primary routes log `Cancelled speculative primary (route=...)`.
@@ -325,21 +325,21 @@ route = determine_route(data['messages'], session=session, date_ctx=date_ctx)
 
 | Route | Baseline | After | Notes |
 |-------|----------|-------|-------|
-| SIMPLE (non-stream) | 1,181–1,426ms | ~1,790ms | See analysis below |
-| MODERATE (non-stream) | 1,803–3,873ms | ~2,167ms | Within baseline range |
+| MODERATE short (non-stream) | 1,181–1,426ms | ~1,790ms | See analysis below |
+| MODERATE long (non-stream) | 1,803–3,873ms | ~2,167ms | Within baseline range |
 | COMPLEX | 8,825–12,442ms | ~11,534ms | Within baseline range |
 | ENRICH | 13,845–30,913ms | ~16,911ms | Within baseline range |
 | Benchmark 3 (long context) | FAILED | **0.66s** | Fixed |
 
-### Analysis: Why SIMPLE Didn't Improve in Benchmarks
+### Analysis: Why Short MODERATE Queries Didn't Improve in Benchmarks
 
 The speculative execution works correctly — `total_ms ≈ max(classification_ms, inference_ms)` instead of `classification_ms + inference_ms`. However, classification (~1–3.8s) still dominates because:
 
-1. **Non-streaming is bounded by classification time.** Speculation hides inference behind classification, but for SIMPLE queries where inference (~200–400ms) is shorter than classification (~1–3.8s), the total is still ≈ classification.
+1. **Non-streaming is bounded by classification time.** Speculation hides inference behind classification, but for short MODERATE queries where inference (~200–400ms) is shorter than classification (~1–3.8s), the total is still ≈ classification.
 2. **Streaming TTFT is also bounded by classification.** We can't start piping speculative tokens until we confirm the route is primary — otherwise a COMPLEX/ENRICH misroute would send wrong tokens to the client. So streaming TTFT ≈ classification_ms, not ~48ms.
 3. **The benchmark's `max_tokens` mismatch.** The benchmark sends `max_tokens: 10`, but the speculative request strips it (reasoning model needs full budget). This makes inference longer than the baseline's artificially capped response, inflating the measured latency.
 
-The original Expected Impact estimates assumed classification could be fully hidden. In practice, classification is the longer task for SIMPLE/MODERATE queries, so it remains the bottleneck. The real win is for **longer MODERATE responses** where inference time exceeds classification time — there, speculation saves the full ~1–1.8s classification overhead.
+The original Expected Impact estimates assumed classification could be fully hidden. In practice, classification is the longer task for short MODERATE queries, so it remains the bottleneck. The real win is for **longer MODERATE responses** where inference time exceeds classification time — there, speculation saves the full ~1–1.8s classification overhead.
 
 ### Future: Classification Latency
 
