@@ -121,26 +121,44 @@ flowchart LR
 
 ```mermaid
 flowchart TD
-    subgraph Docker["Docker Compose — ai-network bridge"]
-        Traefik["<b>Traefik v3.6</b><br/>:80 HTTP / :8080 Dashboard"]
-        App["<b>ai-router</b><br/>python:3.12-slim<br/>Flask :8002"]
-        VLLM_R["<b>vllm-router</b><br/>vllm/vllm-openai<br/>:8001 — GPU device 0"]
-        VLLM_P["<b>vllm-primary</b><br/>vllm/vllm-openai<br/>:8000 — GPU device 0"]
-        Cache[("hf-cache<br/>volume")]
+    Internet(["External Clients"])
+
+    subgraph Docker["Docker Compose"]
+        subgraph External["ai-network — bridge"]
+            CF["<b>cloudflared</b><br/>Cloudflare Tunnel<br/><i>sole external ingress</i>"]
+            Traefik["<b>Traefik v3.6</b><br/>:80 HTTP (localhost only)<br/><i>dashboard disabled</i>"]
+        end
+
+        App["<b>ai-router</b><br/>python:3.12-slim<br/>Flask :8002<br/><i>bridges both networks</i>"]
+
+        subgraph Internal["ai-internal — bridge (no internet)"]
+            VLLM_R["<b>vllm-router</b><br/>vllm/vllm-openai<br/>:8001 — GPU 0"]
+            VLLM_P["<b>vllm-primary</b><br/>vllm/vllm-openai<br/>:8000 — GPU 0"]
+            Cache[("hf-cache<br/>volume")]
+        end
+
+        Secrets[/"Docker Secrets<br/>xai_api_key, api_key<br/>/run/secrets/"/]
     end
 
     ExtXAI["<b>xAI API</b><br/>https://api.x.ai"]
 
+    Internet -->|"Cloudflare Tunnel"| CF
+    CF --> Traefik
     Traefik --> App
     App --> VLLM_R
     App --> VLLM_P
-    App --> ExtXAI
+    App -->|"ai-network<br/>(has internet)"| ExtXAI
     VLLM_R --> Cache
     VLLM_P --> Cache
+    Secrets -.->|"mounted into"| App
 
     style Docker fill:#1a202c,color:#e2e8f0
+    style External fill:#2d3748,color:#e2e8f0
+    style Internal fill:#1a365d,color:#e2e8f0
     style ExtXAI fill:#6b4c8a,color:#fff
     style Cache fill:#2c5282,color:#fff
+    style CF fill:#f6ad55,color:#1a202c
+    style Secrets fill:#2c5282,color:#fff
 ```
 
 ## API Endpoints
